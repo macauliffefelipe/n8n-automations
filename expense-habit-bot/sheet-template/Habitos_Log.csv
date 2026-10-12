@@ -1,0 +1,5 @@
+Fecha,Dia,Mes,Anio,Habito,Valor,Unidad,Cumple,Minimo,Texto,ID,Origen
+2026-10-01,1,10,2026,Gym,45,min,SI,45,gym 45 min,k1x9a-0,reglas
+2026-10-01,1,10,2026,Agua,2,L,SI,2,agua 2l,k1x9b-0,reglas
+2026-10-02,2,10,2026,Natacion,60,min,SI,30,hice una hora de pileta,k1y2c-0,llm
+2026-10-02,2,10,2026,Pasos,8500,pasos,SI,8000,8500 pasos,k1y2d-0,reglas

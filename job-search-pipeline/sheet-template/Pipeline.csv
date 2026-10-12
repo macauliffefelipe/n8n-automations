@@ -1,0 +1,2 @@
+fecha_detectado,score,empresa,puesto,tipo_rol,region,experiencia_anios,pago_usd_mes,contrato,herramientas_match,motivo,fuente,link,publicado,clave,estado,resultado
+12/10/2026,8,Acme Labs,Revenue Operations Analyst,objetivo (RevOps / Sales Ops / BizOps),LATAM,2,2200,contractor,"hubspot, n8n","rol objetivo, pide 2 años, usa hubspot, n8n, USD 2200/mes. Analista de RevOps con HubSpot.",Remotive,https://example.com/jobs/1,2026-10-12T09:00:00Z,acme labs|revenue operations analyst,nuevo,ok

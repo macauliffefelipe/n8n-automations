@@ -1,0 +1,2894 @@
+{
+  "name": "Lead Gen Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## 1. Lead intake (webhook)\nAn authenticated endpoint other tools can post a researched lead to (for example a scheduled research agent). Invalid or duplicate leads are rejected with a clear reply; new ones land in the sheet as \"New\".",
+        "height": 420,
+        "width": 1700,
+        "color": 5
+      },
+      "id": "2750a733-fae8-4e6c-b1cc-bdc04eaa77de",
+      "name": "Note: 1. Lead intake (webhook)",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lead-intake",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "c130499f-84f1-4946-bd04-feefceb0afaa",
+      "name": "Webhook: lead intake",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        40
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Lead Intake Header Auth"
+        }
+      },
+      "notes": "Protected with a Header Auth credential: callers must send the secret in a header. Requests without it are rejected before any node runs."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validates and normalises a lead posted to the intake webhook (for example by a scheduled research agent).\nconst item = $input.first().json;\nconst b = item.body || item;\nconst company = String(b.company || '').trim();\nif (!company) return [{ json: { invalid: true } }];\nconst signals = Array.isArray(b.signals) ? b.signals.join('|') : String(b.signals || '');\nconst domain = String(b.domain || b.dominio || '').toLowerCase().trim().replace(/^https?:\\/\\//, '').replace(/^www\\./, '').split('/')[0];\nreturn [{ json: {\n  invalid: false, company, role: b.role || b.rol || '', location: b.location || b.ubicacion || '', url: b.url || '', why: b.why || b.por_que || '',\n  details: b.details || '', score: Number(b.score) || 0, domain, vertical: b.vertical || '', signals, employees: b.employees || b.empleados || ''\n} }];\n"
+      },
+      "id": "000809bf-8b83-40af-a8c9-6d1614843416",
+      "name": "Parse intake lead",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "48342405-dae1-40ff-ac1f-573e6b37ad31",
+      "name": "Get existing (intake)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        40
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Google Service Account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Same company name or same domain already in the sheet: do not save it twice.\nconst lead = $('Parse intake lead').first().json;\nif (lead.invalid) return [{ json: Object.assign({}, lead, { isDuplicate: false, skip: true }) }];\nconst norm = (s) => String(s || '').toLowerCase().replace(/&/g, ' and ').replace(/\\b(inc|llc|ltd|corp|corporation|co|company|incorporated|holdings)\\b/g, ' ').replace(/[^a-z0-9]+/g, '');\nconst nd = (d) => String(d || '').toLowerCase().trim().replace(/^https?:\\/\\//, '').replace(/^www\\./, '').split('/')[0];\nconst rows = $input.all();\nconst names = new Set(rows.map((r) => norm(r.json.Company)).filter(Boolean));\nconst domains = new Set(rows.map((r) => nd(r.json.Domain)).filter(Boolean));\nconst dup = (lead.domain && domains.has(nd(lead.domain))) || names.has(norm(lead.company));\nreturn [{ json: Object.assign({}, lead, { isDuplicate: dup, skip: dup }) }];\n"
+      },
+      "id": "b77d6449-77b2-465b-b6db-76edc3257c73",
+      "name": "Check intake duplicate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "83db6d08-3b6a-4348-add1-19bebbad1049",
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "93394031-006f-4a94-a4b1-0434d85fbe0a",
+      "name": "Duplicate or invalid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        896,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, duplicate: $json.isDuplicate, invalid: $json.invalid, message: $json.invalid ? \"Missing field: company. Nothing was saved.\" : \"That lead already exists (same domain or company). Nothing was saved.\" } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "4ce2e0ad-1374-44ab-bb4e-934e0e0327a2",
+      "name": "Respond: skipped",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1120,
+        -20
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Company": "={{ $json.company }}",
+            "Domain": "={{ $json.domain }}",
+            "Role": "={{ $json.role }}",
+            "Location": "={{ $json.location }}",
+            "URL": "={{ $json.url }}",
+            "Why": "={{ $json.why }}",
+            "Details": "={{ $json.details }}",
+            "Score": "={{ $json.score }}",
+            "Added_on": "={{ $now.toFormat('yyyy-MM-dd') }}",
+            "Status": "New",
+            "Source": "intake-webhook",
+            "Signals": "={{ $json.signals }}",
+            "Vertical": "={{ $json.vertical }}",
+            "Employees": "={{ $json.employees }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "e868e260-bb74-41b7-99b7-25752c8556a3",
+      "name": "Append intake lead",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1120,
+        110
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Google Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: true, company: $('Parse intake lead').first().json.company } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "c7fff138-b0e5-43a6-afbb-cc2946fc6d39",
+      "name": "Respond: saved",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1344,
+        110
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 2. Lead discovery (weekdays 07:00)\nPulls candidates from three sources (job ads, company search, news), merges them by domain, drops blocked and already-known companies, pre-scores them with a rule-based ICP matrix, then asks the local LLM for a final score. Only leads above the minimum score reach the sheet.",
+        "height": 1180,
+        "width": 2900,
+        "color": 6
+      },
+      "id": "88029949-1fac-4e7a-b54a-acb951428685",
+      "name": "Note: 2. Lead discovery (weekdays 07:00)",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 7 * * 1-5"
+            }
+          ]
+        }
+      },
+      "id": "2236bd26-cbc4-4330-9be2-3418273c3dcb",
+      "name": "Schedule: discover leads",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        760
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// CONFIG for the discovery lane. This is the only place that decides who we target, what we say and how we send.\n// To switch to another profile, paste the matching section from config/<profile>.json over this object.\nconst CONFIG = {\n  \"timezone\": \"America/Argentina/Buenos_Aires\",\n  \"language\": \"en\",\n  \"sender\": {\n    \"name\": \"Your Name\",\n    \"title\": \"Business Development\",\n    \"company\": \"Your Company\",\n    \"signature\": \"Your Name\\nBusiness Development\\nYour Company\",\n    \"email\": \"you@example.com\",\n    \"review_email\": \"you@example.com\"\n  },\n  \"models\": {\n    \"email\": \"qwen2.5:14b\",\n    \"linkedin\": \"qwen3:4b\",\n    \"score\": \"qwen2.5:14b\",\n    \"classify\": \"llama3.2:3b\",\n    \"followup\": \"qwen3:4b\"\n  },\n  \"sources\": {\n    \"adzuna\": {\n      \"enabled\": true,\n      \"country\": \"us\",\n      \"max_days_old\": 40,\n      \"keep_regex\": \"(head of sales|\\\\bvp\\\\b.{0,30}sales|vice president.{0,30}sales|director of sales|sales director|sales manager|account executive|sales development|\\\\bsdr\\\\b|\\\\bbdr\\\\b|business development (manager|executive|representative|director)|chief revenue|revenue officer|founding[^a-z]{0,25}sales)\",\n      \"queries\": [\n        {\n          \"what\": \"VP of Sales\",\n          \"where\": \"Texas\"\n        },\n        {\n          \"what\": \"Head of Sales\",\n          \"where\": \"Austin\"\n        },\n        {\n          \"what\": \"Account Executive SaaS\",\n          \"where\": \"Austin\"\n        },\n        {\n          \"what\": \"Sales Manager IT services\",\n          \"where\": \"Colorado\"\n        },\n        {\n          \"what\": \"Director of Sales\",\n          \"where\": \"Arizona\"\n        }\n      ]\n    },\n    \"apollo\": {\n      \"enabled\": true,\n      \"rotate_pages\": 4,\n      \"locations\": [\n        \"Texas, United States\",\n        \"Colorado, United States\",\n        \"Arizona, United States\"\n      ],\n      \"sales_titles\": [\n        \"account executive\",\n        \"sales manager\",\n        \"head of sales\",\n        \"vp of sales\",\n        \"director of sales\",\n        \"business development\",\n        \"sales development representative\"\n      ],\n      \"queries\": [\n        {\n          \"vertical\": \"SaaS\",\n          \"label\": \"saas_hiring\",\n          \"signals\": [\n            \"hiring_sales_role\"\n          ],\n          \"keywords\": [\n            \"saas\",\n            \"b2b software\"\n          ],\n          \"employee_ranges\": [\n            \"1,10\",\n            \"11,50\"\n          ],\n          \"job_titles\": \"sales_titles\",\n          \"job_posted_days\": 60\n        },\n        {\n          \"vertical\": \"SaaS\",\n          \"label\": \"saas_funded\",\n          \"signals\": [\n            \"recent_funding\"\n          ],\n          \"keywords\": [\n            \"saas\",\n            \"b2b software\"\n          ],\n          \"employee_ranges\": [\n            \"1,10\",\n            \"11,50\"\n          ],\n          \"funding_days\": 365\n        },\n        {\n          \"vertical\": \"IT services\",\n          \"label\": \"it_hiring\",\n          \"signals\": [\n            \"hiring_sales_role\"\n          ],\n          \"keywords\": [\n            \"managed services\",\n            \"managed service provider\",\n            \"it services\"\n          ],\n          \"employee_ranges\": [\n            \"1,10\",\n            \"11,50\"\n          ],\n          \"job_titles\": \"sales_titles\",\n          \"job_posted_days\": 60\n        },\n        {\n          \"vertical\": \"Professional services\",\n          \"label\": \"profserv_hiring\",\n          \"signals\": [\n            \"hiring_sales_role\"\n          ],\n          \"keywords\": [\n            \"management consulting\",\n            \"consulting\",\n            \"accounting\",\n            \"legal services\",\n            \"wealth management\"\n          ],\n          \"employee_ranges\": [\n            \"1,10\",\n            \"11,50\"\n          ],\n          \"job_titles\": [\n            \"business development\",\n            \"sales\",\n            \"account executive\",\n            \"client development\"\n          ],\n          \"job_posted_days\": 90\n        }\n      ]\n    },\n    \"news\": {\n      \"enabled\": true,\n      \"location_label\": \"US (news)\",\n      \"based_prefixes\": [\n        \"texas\",\n        \"austin\",\n        \"colorado\",\n        \"arizona\"\n      ],\n      \"queries\": [\n        \"Austin startup raises seed OR \\\"Series A\\\" software when:30d\",\n        \"Texas OR Colorado \\\"managed service provider\\\" OR consulting OR \\\"professional services\\\" raises OR acquires OR expands when:30d\"\n      ]\n    }\n  },\n  \"blocklists\": {\n    \"whole_word\": [\n      \"sandler\",\n      \"gong\",\n      \"clari\",\n      \"chorus\",\n      \"outreach\",\n      \"salesloft\"\n    ],\n    \"substring\": [\n      \"winning by design\",\n      \"force management\",\n      \"sales enablement\",\n      \"sales training\",\n      \"sales coaching\",\n      \"fractional cro\",\n      \"fractional cso\",\n      \"revops consulting\",\n      \"recruit\",\n      \"staffing\",\n      \"talent acquisition\",\n      \"headhunt\",\n      \"executive search\",\n      \"michael page\",\n      \"robert half\",\n      \"korn ferry\"\n    ],\n    \"big_corp\": [\n      \"salesforce\",\n      \"microsoft\",\n      \"oracle\",\n      \"google\",\n      \"amazon\",\n      \"meta\",\n      \"workday\",\n      \"servicenow\",\n      \"adobe\",\n      \"sap\",\n      \"ibm\",\n      \"staples\",\n      \"uber\",\n      \"honeywell\",\n      \"medtronic\",\n      \"merck\",\n      \"labcorp\",\n      \"pwc\",\n      \"metlife\",\n      \"equifax\",\n      \"marriott\",\n      \"deloitte\",\n      \"accenture\",\n      \"kpmg\",\n      \"cvs\",\n      \"cognizant\",\n      \"stripe\",\n      \"aetna\",\n      \"wipro\",\n      \"infosys\",\n      \"tcs\",\n      \"capgemini\",\n      \"ey\",\n      \"pepsico\",\n      \"nestle\",\n      \"kroger\",\n      \"walgreens\"\n    ]\n  },\n  \"icp\": {\n    \"prompt\": \"You evaluate B2B leads for a services consultancy that helps founder-led companies build a repeatable sales process (ICP, playbooks, pricing, CRM, pipeline). Decide whether this company is a good prospect and return an integer score from 1 to 12.\\n\\nICP: United States; 1-30 employees (up to 50 with a strong signal); revenue between 500K and 5M or clear potential; founder-led, with no COO, RevOps or Sales Ops in place; verticals: B2B services and consulting, SaaS, IT services and MSPs, professional services (legal, accounting, wealth management).\\n\\n\\\"WHY NOW\\\" SIGNALS (positive, strongest first): 1) a posted VP/Head of Sales or first AE/SDR vacancy (strongest); 2) a first sales leader hired less than 6 months ago; 3) a recent seed or Series A round; 4) an OPEN Sales Ops/RevOps vacancy in a company under 50 people (ambiguous); 5) a fragmented stack (spreadsheets plus a CRM); 6) physical or market expansion; 7) a founder complaining about follow-ups or CRM; 8) funding in the last 12 months; 9) a sales vacancy open for more than 30 days or repeated sales hiring (the founder already tried and it did not stick); 10) news about expansion, a new location or an acquisition.\\n\\nHARD RULES (score 1-4): the company ALREADY has someone in a RevOps/Sales Ops/Director of Operations seat (a person in the role, not an open vacancy); a mature integrated sales stack; more than 200 employees or a nationally known corporation (score 1-2 ALWAYS, whatever the role; when unsure whether a company is large and well known, assume it is and lower the score); a direct competitor (growth or RevOps consultancy, fractional CRO/CSO, sales enablement or training); procurement or buying-committee processes.\\n\\nCONSISTENCY: the score cannot be 8 or higher unless \\\"why\\\" cites a concrete signal from the list, not a generic phrase.\\nDO NOT INVENT: use only the information provided.\\nIf there is no sales vacancy (empty role) but the firmographics fit, it is a weaker lead: maximum score 6 unless the description shows another concrete signal.\",\n    \"signal_weights\": {\n      \"hiring_sales_role\": 3,\n      \"hiring_sales_manager\": 3,\n      \"recent_funding\": 3,\n      \"founder_closing\": 3,\n      \"stale_vacancy\": 2,\n      \"repeat_sales_hiring\": 2,\n      \"expansion\": 2,\n      \"referral_dependent\": 2,\n      \"no_sales_function\": 2,\n      \"new_sales_leader\": 1,\n      \"acquisition\": 1,\n      \"crm_spreadsheets\": 1\n    },\n    \"home_region_regex\": \"texas|austin|,\\\\s*tx\\\\b\",\n    \"revenue_ideal\": [\n      500000,\n      5000000\n    ],\n    \"employees_ok\": [\n      3,\n      30\n    ],\n    \"founder_led_max_employees\": 15\n  },\n  \"limits\": {\n    \"llm_cap\": 25,\n    \"resolve_cap\": 10,\n    \"min_score\": 6,\n    \"max_employees\": 100\n  }\n};\n\n// Pass every incoming item through and attach the config, so the next nodes can read it with\n// $('Config (discovery)').first().json.cfg\nreturn $input.all().map((it, i) => ({ json: Object.assign({}, it.json, { cfg: CONFIG }), pairedItem: { item: i } }));\n"
+      },
+      "id": "2f9cb4bf-f46b-4bc9-b0ec-140045b256e1",
+      "name": "Config (discovery)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        760
+      ],
+      "notes": "Profile settings for the discovery lane (sender, models, rules, prompts). Edit here to retarget the pipeline."
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "4b62f187-1cac-4efc-81cd-279438ac3d76",
+      "name": "Get existing leads",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        760
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Google Service Account"
+        }
+      },
+      "alwaysOutputData": true,
+      "notes": "Reads every lead already in the sheet so nothing is evaluated or contacted twice."
+    },
+    {
+      "parameters": {
+        "jsCode": "// One item = one Adzuna call. The queries live in the Config node.\nconst C = $('Config (discovery)').first().json.cfg;\nconst A = (C.sources || {}).adzuna || {};\nif (!A.enabled) return [];\nreturn (A.queries || []).map((x) => ({ json: x }));\n"
+      },
+      "id": "3280a91d-47e2-4c7c-852e-71cb921c6d64",
+      "name": "Build Adzuna queries",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://api.adzuna.com/v1/api/jobs/' + $('Config (discovery)').first().json.cfg.sources.adzuna.country + '/search/1' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "app_id",
+              "value": "YOUR_ADZUNA_APP_ID"
+            },
+            {
+              "name": "what",
+              "value": "={{ $json.what }}"
+            },
+            {
+              "name": "where",
+              "value": "={{ $json.where }}"
+            },
+            {
+              "name": "results_per_page",
+              "value": "20"
+            },
+            {
+              "name": "max_days_old",
+              "value": "={{ $('Config (discovery)').first().json.cfg.sources.adzuna.max_days_old }}"
+            },
+            {
+              "name": "sort_by",
+              "value": "date"
+            }
+          ]
+        },
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          }
+        }
+      },
+      "id": "47eb13eb-0813-4b2d-9c19-4b5bad687c70",
+      "name": "Adzuna search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        896,
+        560
+      ],
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Adzuna API Key"
+        }
+      },
+      "alwaysOutputData": true,
+      "notes": "Job ads that mention sales hires are a buying signal. The app key comes from a credential (query param app_key); the app id goes in the app_id field."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalises Adzuna results to the common candidate shape and keeps only the job titles that matter for the ICP.\nconst C = $('Config (discovery)').first().json.cfg;\nconst A = (C.sources || {}).adzuna || {};\nconst keepRe = new RegExp(A.keep_regex || '.', 'i');\nconst out = [];\nconst seen = new Set();\nfor (const item of $input.all()) {\n  const data = item.json || {};\n  const results = Array.isArray(data.results) ? data.results : [];\n  for (const r of results) {\n    const title = r.title || '';\n    if (!keepRe.test(title)) continue;\n    const company = (r.company && r.company.display_name) ? r.company.display_name : '';\n    if (!company) continue;\n    const loc = (r.location && r.location.display_name) ? r.location.display_name : '';\n    const key = `${company}|${title}`.toLowerCase().replace(/\\s+/g, ' ').trim();\n    if (seen.has(key)) continue;\n    seen.add(key);\n    out.push({ json: {\n      company, position: title, location: loc, url: r.redirect_url || '',\n      description: `Company: ${company}. Location: ${loc}. ${(r.description || '').replace(/\\s+/g, ' ').slice(0, 400)}`,\n      dominio: '', source: 'adzuna', signals: ['hiring_sales_role'], created: r.created || ''\n    } });\n  }\n}\nreturn out;\n"
+      },
+      "id": "6186c97a-2613-4a33-b4c5-8712d41a569f",
+      "name": "Parse Adzuna",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        560
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Google News RSS (free). Each query becomes one feed request.\nconst C = $('Config (discovery)').first().json.cfg;\nconst N = (C.sources || {}).news || {};\nif (!N.enabled) return [];\nreturn (N.queries || []).map((s) => ({ json: { url: 'https://news.google.com/rss/search?q=' + encodeURIComponent(s) + '&hl=en-US&gl=US&ceid=US:en' } }));\n"
+      },
+      "id": "3a420d72-04c6-442f-a63a-c0e42bffbfa5",
+      "name": "Build news queries",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        760
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "options": {}
+      },
+      "id": "f49047de-b54e-4eb3-999d-220790bce5cf",
+      "name": "Google News RSS",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1.2,
+      "position": [
+        896,
+        760
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extracts company + signal from headlines (\"X raises $3M...\", \"X opens a new location...\").\nconst C = $('Config (discovery)').first().json.cfg;\nconst N = (C.sources || {}).news || {};\nconst prefixes = (N.based_prefixes || []).filter(Boolean);\nconst basedRe = prefixes.length ? new RegExp('^(' + prefixes.join('|') + ')[- ]based\\\\s+', 'i') : null;\nconst STOP = new Set(['how', 'why', 'what', 'who', 'when', 'where', 'the', 'this', 'new', 'top', 'best', 'report', 'study'].concat(prefixes.map((p) => p.toLowerCase())));\nconst out = [];\nconst seen = new Set();\nfor (const it of $input.all()) {\n  const j = it.json || {};\n  const title = String(j.title || '').replace(/\\s+-\\s+[^-]{2,40}$/, '').trim();\n  if (!title) continue;\n  const pub = Date.parse(j.isoDate || j.pubDate || '');\n  if (pub && Date.now() - pub > 45 * (24 * 3600 * 1000)) continue;\n  const clean = basedRe ? title.replace(basedRe, '') : title;\n  const m = clean.match(/^([A-Z0-9][\\w&'.\\-]*(?:\\s+[A-Z0-9&][\\w&'.\\-]*){0,4}?)\\s+(raises|raised|secures|secured|closes|closed|lands|announces|acquires|acquired|opens|opening|expands|expanding|launches|names|hires|appoints|adds)\\b/);\n  if (!m) continue;\n  const company = m[1].trim();\n  if (STOP.has(company.toLowerCase()) || company.split(/\\s+/).length > 5) continue;\n  const verb = m[2].toLowerCase();\n  const signals = [];\n  if (/raise|secure|close|land/.test(verb) && /\\$|seed|series|funding|round/i.test(title)) signals.push('recent_funding');\n  if (/open|expand/.test(verb)) signals.push('expansion');\n  if (/acquire/.test(verb)) signals.push('acquisition');\n  if (/name|hire|appoint|add/.test(verb) && /sales|revenue|business development|growth/i.test(title)) signals.push('new_sales_leader');\n  if (!signals.length) continue;\n  const key = company.toLowerCase();\n  if (seen.has(key)) continue;\n  seen.add(key);\n  out.push({ json: { company, position: '', location: N.location_label || '', url: j.link || '', description: 'News: ' + title, dominio: '', source: 'news', signals, vertical: '' } });\n}\nreturn out;\n"
+      },
+      "id": "fbbf21b9-1ceb-478a-851c-79bb598a6686",
+      "name": "Parse news signals",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        760
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {},
+      "id": "3bb04263-5160-49fe-97da-272e93b9780c",
+      "name": "Merge weak sources",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1344,
+        660
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// \"Weak\" candidates (job ads + news) have no domain or firmographics yet. Here they are deduplicated, vacancy history is tracked\n// (an old or repeated sales vacancy means the founder already tried and it did not stick), pre-scored, and capped before the\n// paid company lookup (one Apollo credit each).\nconst C = $('Config (discovery)').first().json.cfg;\nconst normName = (s) => {\n  const base = String(s || '').toLowerCase().replace(/&/g, ' and ');\n  const stripped = base.replace(/\\b(inc|llc|ltd|corp|corporation|co|company|incorporated|holdings)\\b/g, ' ').replace(/[^a-z0-9]+/g, '');\n  return stripped || base.replace(/[^a-z0-9]+/g, '');\n};\nconst normDomain = (d) => String(d || '').toLowerCase().trim().replace(/^https?:\\/\\//, '').replace(/^www\\./, '').split('/')[0];\nconst uniq = (a) => Array.from(new Set((a || []).filter(Boolean)));\nconst BL = C.blocklists || {};\nconst words = (s) => String(s || '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);\nconst containsPhrase = (ws, term) => {\n  const tw = words(term);\n  if (tw.length === 0) return false;\n  for (let i = 0; i <= ws.length - tw.length; i++) {\n    let m = true;\n    for (let j = 0; j < tw.length; j++) if (ws[i + j] !== tw[j]) { m = false; break; }\n    if (m) return true;\n  }\n  return false;\n};\n// Competitors and vendors (whole word anywhere), big corporations (company name only), staffing firms and similar (substring).\nconst isBlocked = (company, description) => {\n  const ws = words(company);\n  const hay = `${company} ${description || ''}`.toLowerCase();\n  const wset = new Set(words(hay));\n  for (const t of (BL.whole_word || [])) if (wset.has(t)) return true;\n  for (const t of (BL.big_corp || [])) if (containsPhrase(ws, t)) return true;\n  for (const t of (BL.substring || [])) if (hay.includes(t)) return true;\n  return false;\n};\nconst W = (C.icp || {}).signal_weights || {};\nconst homeRe = (C.icp || {}).home_region_regex ? new RegExp(C.icp.home_region_regex, 'i') : null;\nconst preScore = (c) => {\n  let s = 0;\n  for (const sg of uniq(c.signals)) s += W[sg] || 0;\n  if (homeRe && homeRe.test(c.location || '')) s += 1;\n  return s;\n};\nconst sd = $getWorkflowStaticData('global');\nsd.seenWeak = sd.seenWeak || {};\nsd.seenFinal = sd.seenFinal || {};\nsd.jobHistory = sd.jobHistory || {};\nconst DAY = (24 * 3600 * 1000), NOW = Date.now();\nfor (const store of ['seenWeak', 'seenFinal']) {\n  for (const k of Object.keys(sd[store])) if (NOW - sd[store][k].t > 45 * DAY) delete sd[store][k];\n}\nfor (const k of Object.keys(sd.jobHistory)) if (NOW - (sd.jobHistory[k].last || 0) > 200 * DAY) delete sd.jobHistory[k];\n\nconst RESOLVE_CAP = (C.limits || {}).resolve_cap || 10;\nconst existingRows = $('Get existing leads').all();\nconst existingNames = new Set(existingRows.map((r) => normName(r.json.Company)).filter(Boolean));\n\nconst groups = new Map();\nfor (const it of $input.all()) {\n  const j = it.json || {};\n  const company = String(j.company || '').trim();\n  if (!company) continue;\n  const key = normName(company) || company.toLowerCase();\n  let g = groups.get(key);\n  if (!g) {\n    g = Object.assign({}, j, { company, key, signals: [].concat(j.signals || []), sources: [j.source].filter(Boolean), positions: j.position ? [j.position] : [] });\n    groups.set(key, g);\n  } else {\n    g.signals.push(...[].concat(j.signals || []));\n    if (j.source && !g.sources.includes(j.source)) g.sources.push(j.source);\n    if (j.position && !g.positions.includes(j.position)) g.positions.push(j.position);\n    if (!g.url && j.url) g.url = j.url;\n    if (!g.created && j.created) g.created = j.created;\n    if (String(j.description || '').length > String(g.description || '').length) g.description = j.description;\n  }\n}\n\nconst picked = [];\nfor (const [key, g] of groups) {\n  if (g.sources.includes('adzuna') && g.positions.length) {\n    const h = sd.jobHistory[key] || { first: NOW, titles: [] };\n    for (const p of g.positions) { const t = String(p).toLowerCase().trim(); if (!h.titles.includes(t)) h.titles.push(t); }\n    h.last = NOW;\n    sd.jobHistory[key] = h;\n    const createdAge = g.created ? (NOW - Date.parse(g.created)) / DAY : 0;\n    const histAge = (NOW - h.first) / DAY;\n    if (Math.max(createdAge, histAge) >= 30) g.signals.push('stale_vacancy');\n    if (histAge >= 45 && h.titles.length >= 2) g.signals.push('repeat_sales_hiring');\n  }\n  g.signals = uniq(g.signals);\n  if (existingNames.has(key)) continue;\n  if (isBlocked(g.company, g.description)) continue;\n  const sig = g.signals.slice().sort().join('|');\n  const prev = sd.seenWeak[key];\n  if (prev && NOW - prev.t < 14 * DAY && prev.sig === sig) continue;\n  g.pre = preScore(g);\n  picked.push(g);\n}\npicked.sort((a, b) => b.pre - a.pre);\nconst top = picked.slice(0, RESOLVE_CAP);\nfor (const g of top) sd.seenWeak[g.key] = { t: NOW, sig: g.signals.slice().sort().join('|') };\n\nreturn top.map((g) => ({ json: {\n  company: g.company, position: g.positions.join(' / ') || g.position || '', location: g.location || '', url: g.url || '',\n  description: g.description || '', dominio: '', source: g.sources.join('+'), signals: g.signals, vertical: g.vertical || '', created: g.created || ''\n} }));\n"
+      },
+      "id": "e1aa9441-b129-47a8-acf9-8cd8fe13eebb",
+      "name": "Prepare weak candidates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        660
+      ],
+      "notes": "Deduplicates, tracks how long a sales vacancy has been open, pre-scores and caps how many candidates get the paid company lookup."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apollo.io/api/v1/mixed_companies/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"q_organization_name\": $json.company, \"page\": 1, \"per_page\": 1 } }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          }
+        }
+      },
+      "id": "70b70b4f-4f62-4c55-a279-de718cf1d4e5",
+      "name": "Apollo resolve org",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1792,
+        660
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Apollo API"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Joins the Apollo lookup (one organisation per candidate, same order) back to the original candidate.\nconst base = $('Prepare weak candidates').all();\nconst tokens = (s) => String(s || '').toLowerCase().replace(/&/g, ' and ').replace(/\\b(inc|llc|ltd|corp|corporation|co|company|incorporated|holdings|the)\\b/g, ' ').split(/[^a-z0-9]+/).filter(Boolean);\nconst similar = (a, b) => {\n  const ta = tokens(a), tb = tokens(b);\n  if (!ta.length || !tb.length) return false;\n  const sa = ta.join(''), sb = tb.join('');\n  if (sa === sb) return true;\n  if (Math.min(sa.length, sb.length) >= 5 && (sa.includes(sb) || sb.includes(sa))) return true;\n  const A = new Set(ta), B = new Set(tb);\n  let inter = 0; for (const t of A) if (B.has(t)) inter++;\n  return inter / (A.size + B.size - inter) >= 0.6;\n};\nconst hostOf = (u) => String(u || '').toLowerCase().replace(/^https?:\\/\\//, '').replace(/^www\\./, '').split('/')[0];\nconst out = [];\n$input.all().forEach((item, i) => {\n  const c = base[i] && base[i].json;\n  if (!c) return;\n  const data = item.json || {};\n  const orgs = [].concat(data.organizations || [], data.accounts || []);\n  const o = orgs[0] || null;\n  const res = Object.assign({}, c, { signals: [].concat(c.signals || []) });\n  if (o && o.name && similar(o.name, c.company)) {\n    res.dominio = o.primary_domain || o.domain || hostOf(o.website_url) || '';\n    res.empleados = o.estimated_num_employees || '';\n    res.revenue = o.organization_revenue || o.organization_revenue_printed || '';\n    const fDate = o.latest_funding_round_date || o.latest_funding_date || '';\n    const fStage = o.latest_funding_stage || '';\n    res.funding = [fStage, fDate ? String(fDate).slice(0, 10) : ''].filter(Boolean).join(' ');\n    if (fDate && (Date.now() - Date.parse(fDate)) < 365 * (24 * 3600 * 1000)) res.signals.push('recent_funding');\n    const kw = Array.isArray(o.keywords) ? o.keywords.slice(0, 8).join(', ') : '';\n    res.description = [res.description, o.short_description, kw ? 'Keywords: ' + kw : ''].filter(Boolean).join(' ').slice(0, 900);\n    res.resolved = true;\n  } else {\n    res.resolved = false;\n    // A news item whose company cannot be confirmed is noise and is dropped. A job ad still goes through (the LLM judges it).\n    if (String(c.source || '').includes('news')) return;\n  }\n  out.push({ json: res });\n});\nreturn out;\n"
+      },
+      "id": "36753590-71bc-463e-85cf-d30bf9004da7",
+      "name": "Parse resolved",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2016,
+        660
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Company searches by firmographics + signal. The page rotates daily so the same companies do not come back every run.\nconst C = $('Config (discovery)').first().json.cfg;\nconst A = (C.sources || {}).apollo || {};\nif (!A.enabled) return [];\nconst day = Math.floor(Date.now() / (24 * 3600 * 1000));\nconst page = (day % (A.rotate_pages || 4)) + 1;\nconst ago = (d) => new Date(Date.now() - d * (24 * 3600 * 1000)).toISOString().slice(0, 10);\nconst base = { organization_locations: A.locations || [], page, per_page: 50 };\nreturn (A.queries || []).map((q) => {\n  const body = Object.assign({}, base, { q_organization_keyword_tags: q.keywords || [], organization_num_employees_ranges: q.employee_ranges || [] });\n  if (q.job_titles) {\n    body.q_organization_job_titles = q.job_titles === 'sales_titles' ? (A.sales_titles || []) : q.job_titles;\n    body.organization_job_posted_at_range = { min: ago(q.job_posted_days || 60) };\n  }\n  if (q.funding_days) body.latest_funding_date_range = { min: ago(q.funding_days) };\n  return { json: { vertical: q.vertical, label: q.label, signals: q.signals || [], body } };\n});\n"
+      },
+      "id": "a86163bb-cb1a-4c1e-9566-61ea7546592b",
+      "name": "Build Apollo queries",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        980
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apollo.io/api/v1/mixed_companies/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.body }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          }
+        }
+      },
+      "id": "25eef3bf-d57f-4f00-8882-55047266c442",
+      "name": "Apollo ICP search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        896,
+        980
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Apollo API"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalises Apollo company results (one response per query, same order) to the common candidate shape.\nconst queries = $('Build Apollo queries').all();\nconst hostOf = (u) => String(u || '').toLowerCase().replace(/^https?:\\/\\//, '').replace(/^www\\./, '').split('/')[0];\nconst out = [];\n$input.all().forEach((item, i) => {\n  const q = (queries[i] && queries[i].json) || {};\n  const data = item.json || {};\n  const orgs = [].concat(data.organizations || [], data.accounts || []);\n  for (const o of orgs) {\n    const name = o.name;\n    if (!name) continue;\n    const signals = [].concat(q.signals || []);\n    const fDate = o.latest_funding_round_date || o.latest_funding_date || '';\n    if (fDate && (Date.now() - Date.parse(fDate)) < 365 * (24 * 3600 * 1000)) signals.push('recent_funding');\n    const kw = Array.isArray(o.keywords) ? o.keywords.slice(0, 8).join(', ') : '';\n    out.push({ json: {\n      company: name,\n      position: (q.signals || []).some((s) => /hiring/.test(s)) ? 'Open sales vacancy (per Apollo)' : '',\n      location: [o.city, o.state].filter(Boolean).join(', ') || o.raw_address || '',\n      url: o.linkedin_url || o.website_url || '',\n      description: [o.short_description, kw ? 'Keywords: ' + kw : ''].filter(Boolean).join(' ').slice(0, 900),\n      dominio: o.primary_domain || o.domain || hostOf(o.website_url) || '',\n      source: 'apollo', signals, vertical: q.vertical || '',\n      empleados: o.estimated_num_employees || '',\n      revenue: o.organization_revenue || o.organization_revenue_printed || '',\n      funding: [o.latest_funding_stage, fDate ? String(fDate).slice(0, 10) : ''].filter(Boolean).join(' ')\n    } });\n  }\n});\nreturn out;\n"
+      },
+      "id": "9ad94f71-ed4a-42cc-8fb5-a22320371b47",
+      "name": "Parse Apollo companies",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        980
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {},
+      "id": "4eef30e3-f9c7-4d63-9aa9-f6851fb4be61",
+      "name": "Merge candidates",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        2240,
+        820
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merges every source by domain (or name), stacks the signals, computes the rule-based ICP matrix (0-12) and lets only the\n// best candidates through to the LLM. Already-known companies and recently evaluated ones with no new signal are skipped.\nconst C = $('Config (discovery)').first().json.cfg;\nconst normName = (s) => {\n  const base = String(s || '').toLowerCase().replace(/&/g, ' and ');\n  const stripped = base.replace(/\\b(inc|llc|ltd|corp|corporation|co|company|incorporated|holdings)\\b/g, ' ').replace(/[^a-z0-9]+/g, '');\n  return stripped || base.replace(/[^a-z0-9]+/g, '');\n};\nconst normDomain = (d) => String(d || '').toLowerCase().trim().replace(/^https?:\\/\\//, '').replace(/^www\\./, '').split('/')[0];\nconst uniq = (a) => Array.from(new Set((a || []).filter(Boolean)));\nconst BL = C.blocklists || {};\nconst words = (s) => String(s || '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);\nconst containsPhrase = (ws, term) => {\n  const tw = words(term);\n  if (tw.length === 0) return false;\n  for (let i = 0; i <= ws.length - tw.length; i++) {\n    let m = true;\n    for (let j = 0; j < tw.length; j++) if (ws[i + j] !== tw[j]) { m = false; break; }\n    if (m) return true;\n  }\n  return false;\n};\n// Competitors and vendors (whole word anywhere), big corporations (company name only), staffing firms and similar (substring).\nconst isBlocked = (company, description) => {\n  const ws = words(company);\n  const hay = `${company} ${description || ''}`.toLowerCase();\n  const wset = new Set(words(hay));\n  for (const t of (BL.whole_word || [])) if (wset.has(t)) return true;\n  for (const t of (BL.big_corp || [])) if (containsPhrase(ws, t)) return true;\n  for (const t of (BL.substring || [])) if (hay.includes(t)) return true;\n  return false;\n};\nconst W = (C.icp || {}).signal_weights || {};\nconst homeRe = (C.icp || {}).home_region_regex ? new RegExp(C.icp.home_region_regex, 'i') : null;\nconst preScore = (c) => {\n  let s = 0;\n  for (const sg of uniq(c.signals)) s += W[sg] || 0;\n  if (homeRe && homeRe.test(c.location || '')) s += 1;\n  return s;\n};\nconst sd = $getWorkflowStaticData('global');\nsd.seenWeak = sd.seenWeak || {};\nsd.seenFinal = sd.seenFinal || {};\nsd.jobHistory = sd.jobHistory || {};\nconst DAY = (24 * 3600 * 1000), NOW = Date.now();\nfor (const store of ['seenWeak', 'seenFinal']) {\n  for (const k of Object.keys(sd[store])) if (NOW - sd[store][k].t > 45 * DAY) delete sd[store][k];\n}\nfor (const k of Object.keys(sd.jobHistory)) if (NOW - (sd.jobHistory[k].last || 0) > 200 * DAY) delete sd.jobHistory[k];\n\nconst LLM_CAP = (C.limits || {}).llm_cap || 25;\nconst MAX_EMP = (C.limits || {}).max_employees || 100;\nconst ICP = C.icp || {};\nconst R = ICP.revenue_ideal || [500000, 5000000];\nconst E = ICP.employees_ok || [3, 30];\nconst parseRevenue = (r) => {\n  if (typeof r === 'number') return r;\n  const m = String(r || '').replace(/,/g, '').match(/([\\d.]+)\\s*([kmb])?/i);\n  if (!m) return 0;\n  const n = parseFloat(m[1]); if (!isFinite(n)) return 0;\n  const mult = { k: 1e3, m: 1e6, b: 1e9 }[(m[2] || '').toLowerCase()] || 1;\n  return n * mult;\n};\n// ICP readiness matrix: 6 criteria x 0-2 = 0-12. It only scores what the system can actually know.\nconst matrixScore = (c) => {\n  const sg = new Set(c.signals || []);\n  const emp = Number(c.empleados) || 0;\n  const rev = Number(c.revenue_num) || 0;\n  const p = {};\n  p.founder = sg.has('founder_closing') ? 2 : (emp > 0 && emp <= (ICP.founder_led_max_employees || 15) ? 1 : 0);\n  p.revenue = (rev >= R[0] && rev <= R[1]) ? 2 : (rev > R[1] ? (rev <= R[1] * 2 ? 1 : 0) : (emp >= E[0] && emp <= E[1] ? 1 : 0));\n  p.growth = (sg.has('hiring_sales_role') || sg.has('hiring_sales_manager') || sg.has('recent_funding') || sg.has('expansion')) ? 2 : ((sg.has('acquisition') || sg.has('new_sales_leader')) ? 1 : 0);\n  p.tried = (sg.has('repeat_sales_hiring') || sg.has('stale_vacancy')) ? 2 : ((sg.has('referral_dependent') || sg.has('crm_spreadsheets')) ? 1 : 0);\n  p.reachable = c.dominio ? 1 : 0;\n  p.urgency = (sg.has('recent_funding') || sg.has('expansion') || sg.has('stale_vacancy')) ? 2 : ((sg.has('hiring_sales_role') || sg.has('hiring_sales_manager')) ? 1 : 0);\n  const total = Object.values(p).reduce((a, b) => a + b, 0);\n  return { total, detail: Object.entries(p).map(([k, v]) => k + ':' + v).join(' ') };\n};\n\nconst existingRows = $('Get existing leads').all();\nconst existingNames = new Set(existingRows.map((r) => normName(r.json.Company)).filter(Boolean));\nconst existingDomains = new Set(existingRows.map((r) => normDomain(r.json.Domain)).filter(Boolean));\n\nconst byDomain = new Map(), byName = new Map(), groups = [];\nfor (const it of $input.all()) {\n  const j = it.json || {};\n  const company = String(j.company || '').trim();\n  if (!company) continue;\n  const dk = normDomain(j.dominio);\n  const nk = normName(company) || company.toLowerCase();\n  const sigs = [].concat(j.signals || []);\n  const srcs = String(j.source || '').split('+').filter(Boolean);\n  let g = (dk && byDomain.get(dk)) || byName.get(nk);\n  if (!g) {\n    g = { company, positions: j.position ? [j.position] : [], location: j.location || '', url: j.url || '', description: j.description || '',\n      dominio: dk, sources: srcs, signals: sigs, vertical: j.vertical || '', empleados: j.empleados || '', revenue: j.revenue || '', funding: j.funding || '' };\n    groups.push(g);\n  } else {\n    g.sources.push(...srcs); g.signals.push(...sigs);\n    if (j.position && !g.positions.includes(j.position)) g.positions.push(j.position);\n    if (!g.dominio && dk) g.dominio = dk;\n    if (!g.url && j.url) g.url = j.url;\n    if (!g.location && j.location) g.location = j.location;\n    if (!g.vertical && j.vertical) g.vertical = j.vertical;\n    if (!g.empleados && j.empleados) g.empleados = j.empleados;\n    if (!g.revenue && j.revenue) g.revenue = j.revenue;\n    if (!g.funding && j.funding) g.funding = j.funding;\n    if (String(j.description || '').length > String(g.description || '').length) g.description = j.description;\n  }\n  if (dk) byDomain.set(dk, g);\n  byName.set(nk, g);\n}\n\nconst out = [];\nfor (const g of groups) {\n  g.signals = uniq(g.signals); g.sources = uniq(g.sources);\n  const nk = normName(g.company);\n  if (existingNames.has(nk) || (g.dominio && existingDomains.has(g.dominio))) continue;\n  if (isBlocked(g.company, g.description)) continue;\n  if ((Number(g.empleados) || 0) > MAX_EMP) continue;           // out of ICP by size\n  const sig = g.signals.slice().sort().join('|');\n  const key = g.dominio || nk;\n  const prev = sd.seenFinal[key];\n  if (prev && NOW - prev.t < 14 * DAY && prev.sig === sig) continue;  // already evaluated with no new signal\n  g.revenue_num = parseRevenue(g.revenue);\n  const m = matrixScore(g);\n  out.push(Object.assign({}, g, { key, pre: preScore(g), matrix: m.total, matrix_detail: m.detail }));\n}\nout.sort((a, b) => (b.matrix - a.matrix) || (b.pre - a.pre));\nconst picked = out.slice(0, LLM_CAP);\nfor (const g of picked) sd.seenFinal[g.key] = { t: NOW, sig: g.signals.slice().sort().join('|') };\n\nreturn picked.map((g) => ({ json: {\n  company: g.company, position: g.positions.join(' / '), location: g.location, url: g.url,\n  description: String(g.description || '').slice(0, 700), dominio: g.dominio, source: g.sources.join('+'),\n  signals: g.signals, vertical: g.vertical, empleados: g.empleados, revenue: g.revenue, funding: g.funding,\n  matrix: g.matrix, matrix_detail: g.matrix_detail\n} }));\n"
+      },
+      "id": "3cc21d6e-ebf0-404d-a15e-3f827d5a11c1",
+      "name": "Dedupe and pre-score",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2464,
+        820
+      ],
+      "notes": "Merges all sources by domain, stacks signals, applies blocklists, computes the rule-based ICP matrix (0-12) and caps how many go to the LLM."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Builds the exact Ollama request for each candidate: scoring rubric from the Config node + the facts the system collected.\nconst C = $('Config (discovery)').first().json.cfg;\nconst system = C.icp.prompt;\nreturn $input.all().map((item, i) => {\n  const c = item.json;\n  const user = [\n    `Company: ${c.company}`,\n    `Source: ${c.source}`,\n    `Role they are hiring for (if any): ${c.position || 'none'}`,\n    `Location: ${c.location || 'unknown'}`,\n    `Vertical: ${c.vertical || 'unclassified'}`,\n    `Signals detected by the system (do not invent others): ${(c.signals || []).join(', ') || 'none'}`,\n    `Employees (Apollo): ${c.empleados || 'unknown'}`,\n    `Estimated revenue: ${c.revenue || 'unknown'}`,\n    `Funding: ${c.funding || 'none detected'}`,\n    `Rule-based ICP matrix score (0-12): ${c.matrix} (${c.matrix_detail}). Your score must be consistent with the matrix: you may lower it if a hard rule applies, but do not raise it more than 2 points above the matrix without citing a concrete signal.`,\n    `Description: ${c.description}`,\n    '',\n    'Return ONLY this JSON: {\"score\": <integer 1-12>, \"why\": \"1-2 sentences citing the concrete signal and the segment; mandatory, never empty\"}'\n  ].join('\\n');\n  return { json: Object.assign({}, c, { ollama_request: {\n    model: C.models.score, stream: false, think: false, keep_alive: '15m',\n    format: { type: 'object', properties: { score: { type: 'integer' }, why: { type: 'string' } }, required: ['score', 'why'] },\n    options: { temperature: 0, num_ctx: 4096 },\n    messages: [{ role: 'system', content: system }, { role: 'user', content: user }]\n  } }), pairedItem: { item: i } };\n});\n"
+      },
+      "id": "b94e4dac-ba50-402e-8928-29cfe2ba2488",
+      "name": "Build score prompts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2688,
+        820
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:11434/api/chat",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.ollama_request) }}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "id": "b46201e0-75fc-4d3b-a2ae-9be0fc3fd8da",
+      "name": "Ollama: score",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2912,
+        820
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput",
+      "notes": "Local LLM scores each candidate against the ICP rubric. The request body is built in the previous node, so model, JSON schema and temperature are explicit."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Blends the LLM score with the rule-based matrix. If the LLM applied a hard rule (<= 4) it wins; otherwise the two are averaged.\nconst C = $('Config (discovery)').first().json.cfg;\nconst MIN_SCORE = (C.limits || {}).min_score || 0;\nconst today = DateTime.now().setZone(C.timezone).toFormat('yyyy-MM-dd');\nconst out = [];\n$input.all().forEach((item, i) => {\n  let base = {};\n  try { base = $('Build score prompts').itemMatching(i).json; } catch (e) { base = $('Build score prompts').all()[i].json; }\n  let parsed = null;\n  try { parsed = JSON.parse(item.json.message.content); } catch (e) { parsed = null; }\n  const company = String(base.company || '').trim();\n  if (!company) return;\n  const llm = parsed ? (Number(parsed.score) || 0) : 0;\n  const matrix = Number(base.matrix) || 0;\n  const score = parsed ? (llm <= 4 ? llm : Math.min(12, Math.round((llm + matrix) / 2))) : matrix;   // model down: fall back to the matrix\n  if (score < MIN_SCORE) return;\n  out.push({ json: {\n    Company: company, Domain: base.dominio || '', Role: base.position || '', Location: base.location || '', URL: base.url || '',\n    Why: (parsed && parsed.why && String(parsed.why).trim()) || 'No justification generated, review manually.',\n    Score: score, Added_on: today, Status: 'New', Source: base.source || '', Signals: (base.signals || []).join('|'),\n    Vertical: base.vertical || '', Employees: base.empleados || '', Matrix: matrix, LLM_score: parsed ? llm : ''\n  } });\n});\nreturn out;\n"
+      },
+      "id": "fb0ae7da-0d51-47c3-b377-838e9b46c618",
+      "name": "Parse score",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3136,
+        820
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Company": "={{ $json.Company }}",
+            "Domain": "={{ $json.Domain }}",
+            "Role": "={{ $json.Role }}",
+            "Location": "={{ $json.Location }}",
+            "URL": "={{ $json.URL }}",
+            "Why": "={{ $json.Why }}",
+            "Score": "={{ $json.Score }}",
+            "Added_on": "={{ $json.Added_on }}",
+            "Status": "={{ $json.Status }}",
+            "Source": "={{ $json.Source }}",
+            "Signals": "={{ $json.Signals }}",
+            "Vertical": "={{ $json.Vertical }}",
+            "Employees": "={{ $json.Employees }}",
+            "Matrix": "={{ $json.Matrix }}",
+            "LLM_score": "={{ $json.LLM_score }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "2db30cfc-e172-4cf9-b7ea-1a6b70e7bb56",
+      "name": "Append leads to sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        3360,
+        820
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Google Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## 3. Outreach (weekdays, three slots)\nTakes the best pending lead, finds a decision maker (Hunter or Apollo), checks it is not a duplicate, drafts an email and a LinkedIn note with the local LLM, and runs a validation gate. Depending on the send mode the email goes to the lead or to your own inbox as a draft. Anything that fails validation is parked for review.",
+        "height": 1100,
+        "width": 3400,
+        "color": 3
+      },
+      "id": "ccd47e11-2b6b-4766-a8b3-ef896eabfd54",
+      "name": "Note: 3. Outreach (weekdays, three slots)",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        1760
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * 1-5"
+            },
+            {
+              "field": "cronExpression",
+              "expression": "0 11 * * 1-5"
+            },
+            {
+              "field": "cronExpression",
+              "expression": "0 13 * * 1-5"
+            }
+          ]
+        }
+      },
+      "id": "d92032cc-431d-4891-baa7-78f9e97ec677",
+      "name": "Schedule: outreach",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        2120
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// CONFIG for the outreach lane. This is the only place that decides who we target, what we say and how we send.\n// To switch to another profile, paste the matching section from config/<profile>.json over this object.\nconst CONFIG = {\n  \"timezone\": \"America/Argentina/Buenos_Aires\",\n  \"language\": \"en\",\n  \"sender\": {\n    \"name\": \"Your Name\",\n    \"title\": \"Business Development\",\n    \"company\": \"Your Company\",\n    \"signature\": \"Your Name\\nBusiness Development\\nYour Company\",\n    \"email\": \"you@example.com\",\n    \"review_email\": \"you@example.com\"\n  },\n  \"models\": {\n    \"email\": \"qwen2.5:14b\",\n    \"linkedin\": \"qwen3:4b\",\n    \"score\": \"qwen2.5:14b\",\n    \"classify\": \"llama3.2:3b\",\n    \"followup\": \"qwen3:4b\"\n  },\n  \"contact\": {\n    \"provider\": \"apollo\",\n    \"min_conf_dm\": 60,\n    \"min_conf_senior\": 80,\n    \"generic_prefixes\": [\n      \"info\",\n      \"support\",\n      \"sales\",\n      \"contact\",\n      \"hello\",\n      \"admin\",\n      \"careers\",\n      \"hr\",\n      \"help\",\n      \"office\",\n      \"team\",\n      \"jobs\",\n      \"recruiting\",\n      \"noreply\",\n      \"no-reply\",\n      \"press\",\n      \"media\",\n      \"billing\",\n      \"accounts\",\n      \"informacion\",\n      \"ventas\",\n      \"contacto\",\n      \"hola\",\n      \"administracion\",\n      \"soporte\"\n    ],\n    \"titles\": [\n      \"Founder\",\n      \"Co-Founder\",\n      \"Owner\",\n      \"CEO\",\n      \"Chief Executive Officer\",\n      \"President\",\n      \"Managing Partner\",\n      \"Principal\",\n      \"General Manager\"\n    ]\n  },\n  \"offer\": {\n    \"email_prompt\": \"You are {sender_name}, {sender_title} at {sender_company}. {sender_company} is a B2B services consultancy that helps founder-led companies (SaaS, IT services, professional services) build a repeatable sales process: ideal customer profile, playbooks, pricing, CRM and pipeline, with AI only where it removes friction, so growth stops depending on the founder closing every deal. Write a short cold outreach email to {name} ({title}) at {company}. Concrete context you researched about this company, use it as the hook of the first line: {why}. Role they are hiring for (may be empty): {role}. Extra details (may be empty): {details}. If that context is specific (a sales role they posted, a concrete signal), cite it as is without inventing data. If the context is weak, be brief and direct instead of forcing a fake hook. It is FORBIDDEN to use generic filler such as \\\"recent growth\\\", \\\"growing team\\\", \\\"scaling fast\\\" or \\\"impressed by your work\\\" without a concrete fact behind it. Naturally, and not as the main hook, mention that a defined sales process means a new sales hire lands on a real pipeline instead of inheriting chaos. Close with a concrete, low-commitment ask (a short 15-minute call this week), never a vague \\\"let me know how I can help\\\". Professional, warm, not pushy. Maximum 120 words, no clickbait subject.\\nSign as:\\n{signature}\\nIMPORTANT: the whole email, subject and body, must be written in English. Respond ONLY with a valid JSON object with two fields: subject (short, direct, no emojis) and body (plain text, line breaks as \\\\n). No other text, no markdown, no code blocks.\",\n    \"linkedin_prompt\": \"You are {sender_name} at {sender_company}, a B2B services consultancy that helps founder-led companies build a repeatable sales process. Write a short LinkedIn message (under 300 characters) to {name_or_role} at {company}, as a first-touch connection note. Context you researched: {why}. Structure: a brief hook on the concrete signal above if it exists (if it is weak, a short non-generic hook about the type of company, no invented data), one line on what {sender_company} does, and ONE low-commitment closing question (for example whether a quick 15-minute chat makes sense). Never more than one question. Warm, professional, in English, no emojis, no hashtags. Respond ONLY with a valid JSON object with one field: message (the LinkedIn message text). No other text, no markdown, no code blocks.\"\n  },\n  \"send\": {\n    \"mode\": \"review\",\n    \"min_score\": 6,\n    \"default_score\": 0,\n    \"daily_cap\": 2,\n    \"min_words\": 25,\n    \"max_words\": 170,\n    \"banned_phrases\": [\n      \"recent growth\",\n      \"growing team\",\n      \"scaling fast\",\n      \"rapid growth\",\n      \"impressed by your work\",\n      \"company culture\",\n      \"expanding team\",\n      \"continued growth\"\n    ],\n    \"signature_must_include\": \"Your Company\",\n    \"optout_line\": \"P.S. If this is not relevant, just reply \\\"no\\\" and I will not follow up.\"\n  }\n};\n\n// Pass every incoming item through and attach the config, so the next nodes can read it with\n// $('Config (outreach)').first().json.cfg\nreturn $input.all().map((it, i) => ({ json: Object.assign({}, it.json, { cfg: CONFIG }), pairedItem: { item: i } }));\n"
+      },
+      "id": "35b8fd04-c5e6-4771-ba04-be9a75fcac52",
+      "name": "Config (outreach)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        2120
+      ],
+      "notes": "Profile settings for the outreach lane (sender, models, rules, prompts). Edit here to retarget the pipeline."
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "0376e562-4175-4698-b30a-17060e1e0d1f",
+      "name": "Read leads (outreach)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        2120
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Google Service Account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Picks the single best pending lead for this run: highest score first, oldest row on ties.\n// Stops quietly when the daily cap is reached or nothing qualifies.\nconst C = $('Config (outreach)').first().json.cfg;\nconst S = C.send, P = C.contact;\nconst today = DateTime.now().setZone(C.timezone).toFormat('yyyy-MM-dd');\nconst rows = $input.all().map((r) => r.json).filter((j) => String(j.Company || '').trim());\nconst sentToday = rows.filter((j) => String(j.Sent_on || '').trim() === today).length;\nif (S.daily_cap && sentToday >= S.daily_cap) return [];\nconst scoreOf = (j) => { const raw = String(j.Score === undefined || j.Score === null ? '' : j.Score).trim(); return raw === '' ? (S.default_score || 0) : (Number(raw) || 0); };\nconst pending = rows.filter((j) => {\n  const st = String(j.Status || '').trim().toLowerCase();\n  if (st && st !== 'new') return false;\n  if (P.provider === 'hunter' && !String(j.Domain || '').trim()) return false;\n  return scoreOf(j) >= (S.min_score || 0);\n}).sort((a, b) => (scoreOf(b) - scoreOf(a)) || ((Number(a.row_number) || 0) - (Number(b.row_number) || 0)));\nif (!pending.length) return [];\nconst j = pending[0];\nreturn [{ json: {\n  row_number: j.row_number, company: j.Company, domain: String(j.Domain || '').trim(), role: j.Role || '', location: j.Location || '',\n  url: j.URL || '', why: j.Why || '', details: j.Details || '', score: scoreOf(j)\n} }];\n"
+      },
+      "id": "e377847b-2002-4cb1-bcd0-3450e184b8c0",
+      "name": "Pick lead",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        2120
+      ],
+      "notes": "Highest score first, oldest row on ties. Stops quietly when the daily cap is reached or nothing qualifies."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "7660b2e9-dd94-4142-87e2-bd410e6829c1",
+              "leftValue": "={{ $('Config (outreach)').first().json.cfg.contact.provider }}",
+              "rightValue": "hunter",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "52476e64-b0f1-473a-a36c-77306c76dda3",
+      "name": "Contact provider?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        896,
+        2120
+      ],
+      "notes": "Config decides which contact-finding service runs: Hunter (domain search) or Apollo (company, people, enrich)."
+    },
+    {
+      "parameters": {
+        "domain": "={{ $json.domain }}",
+        "limit": 10,
+        "filters": {}
+      },
+      "id": "8d7c9dab-278a-444d-bcfd-aa289bd3f993",
+      "name": "Hunter domain search",
+      "type": "n8n-nodes-base.hunter",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        2000
+      ],
+      "credentials": {
+        "hunterApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Hunter API"
+        }
+      },
+      "alwaysOutputData": true,
+      "notes": "Hunter spends one credit per search. When credits run out the node fails loudly and the Error Workflow sends an alert."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Hunter returns the people it knows at the domain. Keep decision makers with enough confidence, drop generic mailboxes.\nconst C = $('Config (outreach)').first().json.cfg;\nconst P = C.contact;\nconst lead = $('Pick lead').first().json;\nconst rawItems = $input.all();\nlet contacts = [];\nif (rawItems.length > 1) {\n  contacts = rawItems.map((i) => i.json).filter((c) => c && c.value);\n} else if (rawItems.length === 1) {\n  const j = rawItems[0].json;\n  if (Array.isArray(j)) contacts = j;\n  else if (j && Array.isArray(j.emails)) contacts = j.emails;\n  else if (j && j.data && Array.isArray(j.data.emails)) contacts = j.data.emails;\n  else if (j && j.value) contacts = [j];\n}\nconst MIN_CONF_DM = P.min_conf_dm || 60;\nconst MIN_CONF_SENIOR = P.min_conf_senior || 80;\nconst normalizeWords = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter(Boolean);\nconst containsPhrase = (ws, term) => {\n  const tw = normalizeWords(term);\n  if (tw.length === 0) return false;\n  for (let i = 0; i <= ws.length - tw.length; i++) {\n    let m = true;\n    for (let j = 0; j < tw.length; j++) if (ws[i + j] !== tw[j]) { m = false; break; }\n    if (m) return true;\n  }\n  return false;\n};\nconst isGeneric = (email) => (P.generic_prefixes || []).includes(String(email || '').split('@')[0].toLowerCase());\nconst isDM = (e) => (P.titles || []).some((t) => containsPhrase(normalizeWords((e.position || '') + ' ' + (e.department || '') + ' ' + (e.seniority || '')), t));\nfunction eligible(e) {\n  const conf = Number(e.confidence) || 0;\n  const ver = e.verification && e.verification.status;\n  if (ver === 'invalid') return false;                                   // Hunter says it bounces\n  const senior = ['executive', 'senior'].includes(String(e.seniority || '').toLowerCase());\n  return (isDM(e) && conf >= MIN_CONF_DM) || (senior && conf >= MIN_CONF_SENIOR);\n}\ncontacts = contacts.filter((c) => c && c.value && !isGeneric(c.value)).filter(eligible);\nconst rank = (e) => (isDM(e) ? 2 : 0) + (e.confidence ? e.confidence / 100 : 0);\nconst best = contacts.length ? contacts.slice().sort((a, b) => rank(b) - rank(a))[0] : null;\nreturn [{ json: Object.assign({}, lead, {\n  contact_name: best ? ((best.first_name || '') + ' ' + (best.last_name || '')).trim() : '',\n  contact_title: best ? (best.position || '') : '',\n  contact_email: best ? (best.value || '') : '',\n  contact_linkedin: best ? (best.linkedin || '') : ''\n}) }];\n"
+      },
+      "id": "c287a673-dc83-48a1-95cb-08c64d2885bc",
+      "name": "Parse Hunter contact",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        2000
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apollo.io/api/v1/mixed_companies/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.domain ? { \"q_organization_domains_list\": [$json.domain], \"page\": 1, \"per_page\": 1 } : { \"q_organization_name\": $json.company, \"page\": 1, \"per_page\": 1 } }}",
+        "options": {}
+      },
+      "id": "98a6404c-bd12-4aba-9af0-581c3a029f85",
+      "name": "Apollo find company",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        2240
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Apollo API"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Takes the domain and organisation id from the Apollo company lookup and carries them on the lead.\nconst lead = $('Pick lead').first().json;\nconst data = $input.first().json || {};\nconst orgs = data.organizations || data.accounts || [];\nconst org = orgs[0] || null;\nreturn [{ json: Object.assign({}, lead, {\n  _org_id: org ? (org.id || '') : '',\n  domain: org ? (org.primary_domain || org.website_url || lead.domain || '') : (lead.domain || '')\n}) }];\n"
+      },
+      "id": "31663e8d-227e-4605-a9ca-489fea997d23",
+      "name": "Parse org",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        2240
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ecee4754-9347-4641-ad85-42aa324920e5",
+              "leftValue": "={{ !!$json._org_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a6ff3756-bf1b-4674-96fb-4592d1a4a59e",
+      "name": "Company found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1456,
+        2340
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apollo.io/api/v1/mixed_people/api_search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"organization_ids\": $json._org_id ? [$json._org_id] : [], \"person_titles\": $('Config (outreach)').first().json.cfg.contact.titles, \"page\": 1, \"per_page\": 5 } }}",
+        "options": {}
+      },
+      "id": "9c793c37-1b19-4c9e-b90d-2b3e5ce789c6",
+      "name": "Apollo find people",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1568,
+        2240
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Apollo API"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Chooses the best person returned by Apollo by title priority (founder / CEO / owner first).\nconst C = $('Config (outreach)').first().json.cfg;\nconst lead = $('Parse org').first().json;\nconst data = $input.first().json || {};\nconst people = data.people || [];\nconst rank = (t) => { t = (t || '').toLowerCase();\n  if (/founder|owner|chief executive|(^|[^a-z])ceo([^a-z]|$)|president|managing partner/.test(t)) return 3;\n  if (/\\bvp\\b|vice president|head of sales|general manager|principal/.test(t)) return 2;\n  return 1; };\nlet best = null, bs = -1;\nfor (const pr of people) { const s = rank(pr.title); if (s > bs) { bs = s; best = pr; } }\nreturn [{ json: Object.assign({}, lead, {\n  _person_id: best ? (best.id || '') : '', _first: best ? (best.first_name || '') : '', _title: best ? (best.title || '') : ''\n}) }];\n"
+      },
+      "id": "caf8acc2-61a3-4a76-9deb-33921b3f849f",
+      "name": "Pick person",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1792,
+        2240
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "1756b4db-5ce8-436b-85aa-116d8ee0e11e",
+              "leftValue": "={{ !!$json._person_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "aea9b5f5-36a0-465f-bf6a-817592c095a6",
+      "name": "Person found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1904,
+        2340
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apollo.io/api/v1/people/match",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"id\": $json._person_id, \"first_name\": $json._first, \"domain\": $json.domain, \"reveal_personal_emails\": false } }}",
+        "options": {}
+      },
+      "id": "3de97cb1-484d-4bb6-9212-e5eef60d69f1",
+      "name": "Apollo enrich person",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2016,
+        2240
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Apollo API"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// The enriched person from Apollo. A contact only counts if there is a real, unlocked email (needed for auto-send).\nconst lead = $('Pick person').first().json;\nconst data = $input.first().json || {};\nconst P = data.person || {};\nconst cleanEmail = (e) => { if (!e) return ''; if (/email_not_unlocked|not_unlocked/i.test(e)) return ''; return e; };\nconst name = (P.name || `${P.first_name || lead._first || ''} ${P.last_name || ''}`.trim()).trim();\nconst out = Object.assign({}, lead, {\n  contact_name: name, contact_title: P.title || lead._title || '', contact_email: cleanEmail(P.email), contact_linkedin: P.linkedin_url || ''\n});\nfor (const k of Object.keys(out)) if (k.startsWith('_')) delete out[k];\nreturn [{ json: out }];\n"
+      },
+      "id": "04ee53db-cd8c-40e5-9f99-8699fbf7449b",
+      "name": "Parse Apollo contact",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2240,
+        2240
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Duplicate guard before anything is written: same email already contacted, or same company (domain) already contacted from another row.\nconst lead = $input.first().json;\nconst pool = $('Read leads (outreach)').all().map((r) => r.json);\nconst normDom = (d) => String(d || '').toLowerCase().trim().replace(/^https?:\\/\\//, '').replace(/^www\\./, '').replace(/\\/.*$/, '');\nconst touched = (j) => ['sent', 'drafted', 'replied'].includes(String(j.Status || '').trim().toLowerCase());\nconst email = String(lead.contact_email || '').toLowerCase().trim();\nconst dom = normDom(lead.domain);\nconst sameEmail = email !== '' && pool.some((j) => String(j.Contact_email || '').toLowerCase().trim() === email && touched(j));\nconst sameCompany = dom !== '' && pool.some((j) => Number(j.row_number) !== Number(lead.row_number) && normDom(j.Domain) === dom && String(j.Contact_email || '').trim() !== '' && touched(j));\nconst duplicate = sameEmail || sameCompany;\nreturn [{ json: Object.assign({}, lead, {\n  contact_found: email !== '' && !duplicate,\n  duplicate_blocked: duplicate,\n  discard_reason: duplicate ? 'Duplicate: that email or that company was already contacted from another row' : 'No verified decision-maker contact found'\n}) }];\n"
+      },
+      "id": "5e06f0b0-b3a1-44c7-87cf-cb3d9fd1ce62",
+      "name": "Check duplicates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2464,
+        2120
+      ],
+      "notes": "Blocks a second email to the same address, or to another person at a company that was already contacted."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cd7d0ac1-8289-40bb-af57-d3158b786038",
+              "leftValue": "={{ $json.contact_found }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "c440e61f-07e4-4b3d-b6b1-9d728d57773c",
+      "name": "Contact usable?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2688,
+        2120
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "row_number": "={{ $('Check duplicates').first().json.row_number }}",
+            "Status": "Discarded",
+            "Notes": "={{ $('Check duplicates').first().json.discard_reason }}"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "9dc09c10-64a9-49db-85b2-626a8d3f99e5",
+      "name": "Mark as discarded",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2912,
+        2230
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Google Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Builds the exact Ollama requests for the email and the LinkedIn note from the templates in the Config node.\nconst C = $('Config (outreach)').first().json.cfg;\nconst lead = $input.first().json;\nconst fill = (tpl, v) => String(tpl).replace(/\\{(\\w+)\\}/g, (m, k) => (k in v ? String(v[k]) : m));\nconst v = {\n  name: lead.contact_name || '', title: lead.contact_title || '', company: lead.company, why: lead.why || '', role: lead.role || '',\n  details: lead.details || '', name_or_role: lead.contact_name || (C.language === 'es' ? 'el/la responsable' : 'the founder'),\n  sender_name: C.sender.name, sender_title: C.sender.title, sender_company: C.sender.company, signature: C.sender.signature\n};\nconst mk = (model, prompt) => ({ model, stream: false, format: 'json', think: false, keep_alive: '15m',\n  options: { temperature: 0.4, num_ctx: 4096 }, messages: [{ role: 'user', content: prompt }] });\nreturn [{ json: Object.assign({}, lead, {\n  email_request: mk(C.models.email, fill(C.offer.email_prompt, v)),\n  linkedin_request: mk(C.models.linkedin, fill(C.offer.linkedin_prompt, v))\n}) }];\n"
+      },
+      "id": "bedf0937-4fd7-42aa-b9f2-029e8f0877a3",
+      "name": "Build prompts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2912,
+        2040
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:11434/api/chat",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.email_request) }}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "id": "bd6453ab-eb7d-41a7-9047-37562ae79ec4",
+      "name": "Ollama: draft email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3136,
+        2040
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput",
+      "notes": "Local LLM writes the cold email as JSON (subject + body). Prompt and tone come from the Config node."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:11434/api/chat",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($('Build prompts').first().json.linkedin_request) }}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "id": "a08a6804-587d-4c26-9505-4982d35f4c96",
+      "name": "Ollama: draft LinkedIn",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3360,
+        2040
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput",
+      "notes": "Second, smaller model writes a short LinkedIn connection note."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validation gate: nothing is sent to a lead unless the draft passes every check. A failed draft is parked for human review.\nconst C = $('Config (outreach)').first().json.cfg;\nconst S = C.send;\nconst lead = Object.assign({}, $('Build prompts').first().json);\ndelete lead.email_request; delete lead.linkedin_request;\nconst read = (name) => { try { const r = $(name).first().json; return (r.message && r.message.content) || ''; } catch (e) { return ''; } };\nconst emailRaw = read('Ollama: draft email');\nconst liRaw = read('Ollama: draft LinkedIn');\nfunction extractJson(raw) {\n  try { return JSON.parse(raw); } catch (e) {}\n  const s = String(raw);\n  const a = s.indexOf('{'), b = s.lastIndexOf('}');\n  if (a !== -1 && b > a) { try { return JSON.parse(s.slice(a, b + 1)); } catch (e) {} }\n  return null;\n}\nconst pe = extractJson(emailRaw);\nconst pl = extractJson(liRaw);\nconst parseOk = !!(pe && pe.subject && pe.body);\nconst subject = parseOk ? String(pe.subject).trim() : '';\nlet body = parseOk ? String(pe.body).trim() : '';\nconst plain = body.replace(/<br\\s*\\/?>/gi, '\\n').replace(/<[^>]+>/g, ' ');\nconst lower = plain.toLowerCase();\nconst nWords = plain.split(/\\s+/).filter(Boolean).length;\nconst reasons = [];\nif (!lead.contact_email) reasons.push('no verified contact');\nif (!parseOk) reasons.push('model did not return valid JSON');\nelse {\n  if (nWords > (S.max_words || 170)) reasons.push('too long (' + nWords + ' words)');\n  if (nWords < (S.min_words || 25)) reasons.push('too short (' + nWords + ' words)');\n  if (subject.length > 90) reasons.push('subject too long');\n  if ((S.banned_phrases || []).some((p) => lower.includes(String(p).toLowerCase()))) reasons.push('generic filler phrase');\n  if (/\\{|\\}|undefined|\\bnull\\b|\\bnan\\b|\\[[^\\]]*\\]/i.test(plain)) reasons.push('placeholder or garbage in the text');\n  if (S.signature_must_include && !lower.includes(String(S.signature_must_include).toLowerCase())) reasons.push('missing signature');\n  const en = (lower.match(/\\b(the|and|your|our|with|we)\\b/g) || []).length;\n  const es = (lower.match(/\\b(el|la|los|las|que|para|con|una|por|del)\\b/g) || []).length;\n  if (C.language === 'es' && en >= 4) reasons.push('not in Spanish');\n  if (C.language === 'en' && es >= 4) reasons.push('not in English');\n}\nif (parseOk && reasons.length === 0 && S.optout_line) body = body + '\\n\\n' + S.optout_line;   // opt-out line on every cold email\nconst valid = reasons.length === 0;\nconst action = !valid ? 'flag' : (S.mode === 'auto' ? 'send' : 'draft');\nreturn [{ json: Object.assign({}, lead, {\n  email_subject: subject, email_body_html: body.replace(/\\n/g, '<br>'), linkedin_message: (pl && (pl.message || pl.mensaje)) || '',\n  valid, review_reasons: reasons.join('; '), model_output_excerpt: parseOk ? '' : String(emailRaw).slice(0, 600), action\n}) }];\n"
+      },
+      "id": "aaeffec9-954c-40ff-80c0-355f88caea21",
+      "name": "Validate draft",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3584,
+        2040
+      ],
+      "notes": "Validation gate. Checks length, banned filler phrases, signature, placeholders and language. Only a draft that passes can be sent; the rest is parked for human review."
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "d97f9e18-9872-4a99-9702-f41b5b030fed",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "send",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "send"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "626bcb51-a5d6-4a3c-bcec-a2c7928783f9",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "draft",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "draft"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "3433da06-03b6-4b36-b1f4-da94610b8aa1",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "flag",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "flag"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "50b533bc-bfa2-493b-a1b1-6705296c5a9b",
+      "name": "Route by action",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        3808,
+        2040
+      ],
+      "notes": "send = auto mode, email goes to the lead. draft = review mode, email goes to your own inbox. flag = failed validation."
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.contact_email }}",
+        "subject": "={{ $json.email_subject }}",
+        "message": "={{ $json.email_body_html }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "c0dcb7ee-36bf-4b14-b34b-643243fbf4c8",
+      "name": "Send email to lead",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        4032,
+        1920
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Gmail Account"
+        }
+      },
+      "notes": "The only node that emails a prospect. The row is marked \"Sent\" only after this node succeeds."
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "row_number": "={{ $('Validate draft').first().json.row_number }}",
+            "Domain": "={{ $('Validate draft').first().json.domain }}",
+            "Contact_name": "={{ $('Validate draft').first().json.contact_name }}",
+            "Contact_title": "={{ $('Validate draft').first().json.contact_title }}",
+            "Contact_email": "={{ $('Validate draft').first().json.contact_email }}",
+            "Contact_linkedin": "={{ $('Validate draft').first().json.contact_linkedin }}",
+            "LinkedIn_message": "={{ $('Validate draft').first().json.linkedin_message }}",
+            "Status": "Sent",
+            "Sent_on": "={{ $now.toFormat('yyyy-MM-dd') }}"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "52effb36-5d91-4ef2-afdb-daf6f67d20dc",
+      "name": "Mark as sent",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        4256,
+        1920
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Google Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Config (outreach)').first().json.cfg.sender.review_email }}",
+        "subject": "=[DRAFT] {{ $json.company }} -> {{ $json.contact_email }}",
+        "message": "=To: {{ $json.contact_name }} ({{ $json.contact_title }}) {{ $json.contact_email }}<br><br>Subject: {{ $json.email_subject }}<br><br>{{ $json.email_body_html }}<br><br>--<br>LinkedIn note: {{ $json.linkedin_message }}<br><br>Review mode: nothing was sent to the lead. After you send it yourself, set Status to Sent and Sent_on to the date (yyyy-MM-dd) in the sheet so reply and follow-up tracking start.",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "343b1339-e1f1-496c-9a5f-c89ee069887e",
+      "name": "Send draft to myself",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        4032,
+        2040
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Gmail Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "row_number": "={{ $('Validate draft').first().json.row_number }}",
+            "Domain": "={{ $('Validate draft').first().json.domain }}",
+            "Contact_name": "={{ $('Validate draft').first().json.contact_name }}",
+            "Contact_title": "={{ $('Validate draft').first().json.contact_title }}",
+            "Contact_email": "={{ $('Validate draft').first().json.contact_email }}",
+            "Contact_linkedin": "={{ $('Validate draft').first().json.contact_linkedin }}",
+            "LinkedIn_message": "={{ $('Validate draft').first().json.linkedin_message }}",
+            "Status": "Drafted"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "5c89dcdd-1436-4c73-b140-9d8c300c9a59",
+      "name": "Mark as drafted",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        4256,
+        2040
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Google Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Config (outreach)').first().json.cfg.sender.review_email }}",
+        "subject": "=[REVIEW] {{ $json.company }} -> {{ $json.contact_email }}",
+        "message": "=Not sent. Reason: {{ $json.review_reasons }}<br><br>Recipient: {{ $json.contact_name }} ({{ $json.contact_title }}) {{ $json.contact_email }}<br><br>Generated subject: {{ $json.email_subject }}<br><br>{{ $json.email_body_html }}<br><br>{{ $json.model_output_excerpt }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "9134509c-862d-421e-a2cc-71433b09189e",
+      "name": "Send review alert",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        4032,
+        2160
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Gmail Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "row_number": "={{ $('Validate draft').first().json.row_number }}",
+            "Domain": "={{ $('Validate draft').first().json.domain }}",
+            "Contact_name": "={{ $('Validate draft').first().json.contact_name }}",
+            "Contact_title": "={{ $('Validate draft').first().json.contact_title }}",
+            "Contact_email": "={{ $('Validate draft').first().json.contact_email }}",
+            "Contact_linkedin": "={{ $('Validate draft').first().json.contact_linkedin }}",
+            "LinkedIn_message": "={{ $('Validate draft').first().json.linkedin_message }}",
+            "Status": "Review",
+            "Notes": "={{ $('Validate draft').first().json.review_reasons }}"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "ac016b1c-72f3-4d61-8143-0f45efb4c5b2",
+      "name": "Mark for review",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        4256,
+        2160
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Google Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## 4. Reply tracking (every 10 minutes)\nWatches the inbox, matches replies to leads that were contacted (same sender or a colleague at the same company), ignores out-of-office and bounces, asks the local LLM whether the reply shows real interest, and records it in the sheet.",
+        "height": 420,
+        "width": 1750,
+        "color": 7
+      },
+      "id": "bd85b892-575d-43ab-8254-3d8daa0ee6bc",
+      "name": "Note: 4. Reply tracking (every 10 minutes)",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        3180
+      ]
+    },
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyX",
+              "value": 10,
+              "unit": "minutes"
+            }
+          ]
+        },
+        "simple": false,
+        "filters": {
+          "q": "-category:promotions -category:social -from:me",
+          "readStatus": "both"
+        },
+        "options": {}
+      },
+      "id": "fd8c13ff-9fc9-407d-8392-b96907406ee6",
+      "name": "Gmail trigger: new emails",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        3340
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Gmail Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// CONFIG for the reply tracking lane. This is the only place that decides who we target, what we say and how we send.\n// To switch to another profile, paste the matching section from config/<profile>.json over this object.\nconst CONFIG = {\n  \"timezone\": \"America/Argentina/Buenos_Aires\",\n  \"language\": \"en\",\n  \"sender\": {\n    \"name\": \"Your Name\",\n    \"title\": \"Business Development\",\n    \"company\": \"Your Company\",\n    \"signature\": \"Your Name\\nBusiness Development\\nYour Company\",\n    \"email\": \"you@example.com\",\n    \"review_email\": \"you@example.com\"\n  },\n  \"models\": {\n    \"email\": \"qwen2.5:14b\",\n    \"linkedin\": \"qwen3:4b\",\n    \"score\": \"qwen2.5:14b\",\n    \"classify\": \"llama3.2:3b\",\n    \"followup\": \"qwen3:4b\"\n  },\n  \"own_emails\": [\n    \"you@example.com\"\n  ],\n  \"free_domains\": [\n    \"gmail.com\",\n    \"hotmail.com\",\n    \"outlook.com\",\n    \"yahoo.com\",\n    \"icloud.com\",\n    \"live.com\",\n    \"proton.me\",\n    \"protonmail.com\"\n  ],\n  \"classify_prompt\": \"You classify replies to B2B cold emails sent by {sender_company}. Here is the text of a real reply from a prospect: \\\"{reply}\\\". Decide whether it shows genuine interest (asks for information, proposes a call, says they are interested, asks a related question) or NOT (says no, unsubscribe request, out-of-office or other automatic reply, bounce, unrelated). Respond ONLY with a valid JSON object with two fields: interested (true or false) and reason (one short sentence). No other text.\"\n};\n\n// Pass every incoming item through and attach the config, so the next nodes can read it with\n// $('Config (replies)').first().json.cfg\nreturn $input.all().map((it, i) => ({ json: Object.assign({}, it.json, { cfg: CONFIG }), pairedItem: { item: i } }));\n"
+      },
+      "id": "cf704b58-f2ad-428f-bafb-002b36ea09f2",
+      "name": "Config (replies)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        3340
+      ],
+      "notes": "Profile settings for the reply tracking lane (sender, models, rules, prompts). Edit here to retarget the pipeline."
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "566f55ef-2fcd-4516-80fe-66a4b63b25b5",
+      "name": "Read leads (replies)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        3340
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Google Service Account"
+        }
+      },
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "notes": "Runs once per poll (not once per email) to get the pool of contacted leads."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Matches each incoming email to a lead we contacted (exact sender, or a colleague at the same company domain),\n// ignores automatic replies and bounces, and builds the classification request.\nconst C = $('Config (replies)').first().json.cfg;\nconst R = C;\nconst OWN = (R.own_emails || []).map((e) => String(e).toLowerCase());\nconst FREE = R.free_domains || [];\nconst normDom = (d) => String(d || '').toLowerCase().trim().replace(/^https?:\\/\\//, '').replace(/^www\\./, '').replace(/\\/.*$/, '');\nfunction getFrom(msg) {\n  if (msg.from && msg.from.value && msg.from.value[0]) return String(msg.from.value[0].address || '').toLowerCase().trim();\n  if (typeof msg.from === 'string') { const m = msg.from.match(/<([^>]+)>/); return (m ? m[1] : msg.from).toLowerCase().trim(); }\n  const hs = (msg.payload && msg.payload.headers) || [];\n  const h = hs.find((x) => String(x.name).toLowerCase() === 'from');\n  if (h && h.value) { const m = String(h.value).match(/<([^>]+)>/); return (m ? m[1] : h.value).toLowerCase().trim(); }\n  return '';\n}\nfunction bodyOf(msg) {\n  let t = msg.text && String(msg.text).trim() ? String(msg.text) : String(msg.snippet || '');\n  t = t.replace(/\\r/g, '');\n  for (const re of [/^On .{5,200} wrote:\\s*$/m, /^El .{5,200} escribió:\\s*$/m, /^Em .{5,200} escreveu:\\s*$/m]) {\n    const m = t.match(re); if (m && m.index > 0) t = t.slice(0, m.index);\n  }\n  return t.split('\\n').filter((l) => !l.trim().startsWith('>')).join('\\n').trim().slice(0, 1500);\n}\nconst AUTO_RE = /out of office|fuera de (la )?oficina|respuesta autom|automatic reply|auto-?reply|undeliverable|delivery status|mailer-daemon|no se pudo entregar/i;\nconst touched = (j) => ['sent', 'drafted'].includes(String(j.Status || '').trim().toLowerCase());\nconst pool = $('Read leads (replies)').all().map((r) => r.json).filter((j) => j && j.Contact_email && touched(j) && !String(j.Interest || '').trim());\nconst seen = new Set();\nconst results = [];\n// The emails come from the Gmail trigger (passed through the Config node); the sheet read only supplies the pool of contacted leads.\nfor (const item of $('Config (replies)').all()) {\n  const msg = item.json;\n  const fromEmail = getFrom(msg);\n  if (!fromEmail || OWN.includes(fromEmail) || /^(mailer-daemon|postmaster)@/.test(fromEmail)) continue;\n  const headers = msg.headers || {};\n  const auto = String(headers['auto-submitted'] || '').toLowerCase();\n  const text = bodyOf(msg);\n  if ((auto && auto !== 'no') || AUTO_RE.test(String(msg.subject || '') + ' ' + text.slice(0, 300))) continue;   // automatic replies do not count\n  const dom = fromEmail.split('@')[1] || '';\n  const match = pool.find((j) => String(j.Contact_email).trim().toLowerCase() === fromEmail) ||\n    (!FREE.includes(dom) ? pool.find((j) => normDom(j.Domain) === dom) : null);   // a colleague at the same company replied\n  if (!match || seen.has(match.row_number)) continue;\n  seen.add(match.row_number);\n  const prompt = String(R.classify_prompt).replace('{reply}', text.replace(/\"/g, \"'\")).replace('{sender_company}', R.sender.company);\n  results.push({ json: {\n    row_number: match.row_number, from_email: fromEmail, company: match.Company, reply_text: text,\n    ollama_request: { model: R.models.classify, stream: false, think: false, keep_alive: '15m',\n      format: { type: 'object', properties: { interested: { type: 'boolean' }, reason: { type: 'string' } }, required: ['interested', 'reason'] },\n      options: { temperature: 0, num_ctx: 4096 }, messages: [{ role: 'user', content: prompt }] }\n  } });\n}\nreturn results;\n"
+      },
+      "id": "26e5f75f-9829-4baf-a64e-7369021f8c0f",
+      "name": "Match replies",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        3340
+      ],
+      "notes": "Matches each email to a lead, ignores automatic replies and bounces, and builds the classification request."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:11434/api/chat",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.ollama_request) }}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "id": "e0f554ec-6d3a-4022-ad07-482891970516",
+      "name": "Ollama: classify reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        896,
+        3340
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput",
+      "notes": "Local LLM answers one question: does this reply show genuine interest? Output is validated JSON (interested: true/false)."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Reads the classification. If the model is down or answers garbage the reply is marked \"Unclear\" for a human instead of guessing.\nreturn $input.all().map((it, i) => {\n  let prev;\n  try { prev = $('Match replies').itemMatching(i).json; } catch (e) { prev = $('Match replies').all()[i].json; }\n  let p = null;\n  try { p = JSON.parse(it.json.message.content); } catch (e) { p = null; }\n  const interest = p && typeof p.interested === 'boolean' ? (p.interested ? 'Yes' : 'No') : 'Unclear';\n  return { json: { row_number: prev.row_number, company: prev.company, reply_text: prev.reply_text, interest, interest_reason: (p && p.reason) || 'Could not classify automatically, review manually.' }, pairedItem: { item: i } };\n});\n"
+      },
+      "id": "615dc368-caa9-4238-bd4a-156f13a95084",
+      "name": "Parse interest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        3340
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "row_number": "={{ $json.row_number }}",
+            "Status": "Replied",
+            "Reply_text": "={{ $json.reply_text }}",
+            "Interest": "={{ $json.interest }}"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "b3360dae-b019-4fc6-a29a-7be4def66c48",
+      "name": "Update lead with reply",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1344,
+        3340
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Google Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## 5. Follow-up drafts (weekdays 10:00)\nFinds a lead contacted 3+ business days ago with no reply, drafts a very short follow-up and sends it to your own inbox to review and send as a reply in the original thread.",
+        "height": 420,
+        "width": 1750,
+        "color": 8
+      },
+      "id": "f069f378-76d4-4676-a77b-b061ecf1bc75",
+      "name": "Note: 5. Follow-up drafts (weekdays 10:00)",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        3780
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 10 * * 1-5"
+            }
+          ]
+        }
+      },
+      "id": "247bfaf4-07ab-40de-be89-bfa676ace72e",
+      "name": "Schedule: follow-up",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        3940
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// CONFIG for the follow-up lane. This is the only place that decides who we target, what we say and how we send.\n// To switch to another profile, paste the matching section from config/<profile>.json over this object.\nconst CONFIG = {\n  \"timezone\": \"America/Argentina/Buenos_Aires\",\n  \"language\": \"en\",\n  \"sender\": {\n    \"name\": \"Your Name\",\n    \"title\": \"Business Development\",\n    \"company\": \"Your Company\",\n    \"signature\": \"Your Name\\nBusiness Development\\nYour Company\",\n    \"email\": \"you@example.com\",\n    \"review_email\": \"you@example.com\"\n  },\n  \"models\": {\n    \"email\": \"qwen2.5:14b\",\n    \"linkedin\": \"qwen3:4b\",\n    \"score\": \"qwen2.5:14b\",\n    \"classify\": \"llama3.2:3b\",\n    \"followup\": \"qwen3:4b\"\n  },\n  \"after_business_days\": 3,\n  \"prompt\": \"You are {sender_name} at {sender_company}, a B2B services consultancy that helps founder-led companies build a repeatable sales process. A few days ago you emailed {name} ({title}) at {company}. Original context: {why}. Role they are hiring for (may be empty): {role}. They have not replied. Write a VERY short follow-up (maximum 50 words) that picks up the previous thread without repeating the whole pitch, light and warm, not pushy. Close with a concrete low-commitment question (for example whether a quick call this week makes sense, or offering to share a relevant example). Sign as:\\n{signature}\\nIMPORTANT: fully in English, subject and body. Respond ONLY with a valid JSON object with two fields: subject (short, may start with 'Re: ') and body (plain text, line breaks as \\\\n). No other text, no markdown, no code blocks.\"\n};\n\n// Pass every incoming item through and attach the config, so the next nodes can read it with\n// $('Config (follow-up)').first().json.cfg\nreturn $input.all().map((it, i) => ({ json: Object.assign({}, it.json, { cfg: CONFIG }), pairedItem: { item: i } }));\n"
+      },
+      "id": "ddd5206e-979f-4a54-acc0-f4c6bd7b6f6e",
+      "name": "Config (follow-up)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        3940
+      ],
+      "notes": "Profile settings for the follow-up lane (sender, models, rules, prompts). Edit here to retarget the pipeline."
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "acff2a8c-4858-4774-8e35-541b68d2f525",
+      "name": "Read leads (follow-up)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        3940
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Google Service Account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Finds the next lead that was contacted N business days ago, has not replied and has not had a follow-up yet.\nconst C = $('Config (follow-up)').first().json.cfg;\nconst F = C;\nconst tz = C.timezone;\nconst today = DateTime.now().setZone(tz).startOf('day');\nconst bizDays = (iso) => {\n  let d = DateTime.fromISO(String(iso || '').trim(), { zone: tz });\n  if (!d.isValid) return -1;\n  d = d.startOf('day');\n  let n = 0;\n  while (d < today) { d = d.plus({ days: 1 }); if (d.weekday <= 5) n++; }\n  return n;\n};\nconst rows = $input.all().map((r) => r.json);\nconst eligible = rows.filter((j) =>\n  String(j.Status || '').trim().toLowerCase() === 'sent' && String(j.Sent_on || '').trim() !== '' &&\n  String(j.Followup_on || '').trim() === '' && String(j.Reply_text || '').trim() === '' && String(j.Interest || '').trim() === '' &&\n  String(j.Contact_email || '').trim() !== '' && bizDays(j.Sent_on) >= (F.after_business_days || 3));\nif (!eligible.length) return [];\nconst j = eligible[0];\nconst fill = (tpl, v) => String(tpl).replace(/\\{(\\w+)\\}/g, (m, k) => (k in v ? String(v[k]) : m));\nconst v = { name: j.Contact_name || '', title: j.Contact_title || '', company: j.Company, why: j.Why || '', role: j.Role || '', details: j.Details || '',\n  sender_name: C.sender.name, sender_title: C.sender.title, sender_company: C.sender.company, signature: C.sender.signature };\nreturn [{ json: {\n  row_number: j.row_number, company: j.Company, contact_name: j.Contact_name || '', contact_email: j.Contact_email,\n  followup_request: { model: C.models.followup, stream: false, format: 'json', think: false, keep_alive: '15m',\n    options: { temperature: 0.4, num_ctx: 4096 }, messages: [{ role: 'user', content: fill(F.prompt, v) }] }\n} }];\n"
+      },
+      "id": "417afc3e-2294-4229-9e18-ea7a6fe4a604",
+      "name": "Pick follow-up",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        3940
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:11434/api/chat",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.followup_request) }}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "id": "a4141b2e-55d8-4d61-b1e2-db0dc488ade9",
+      "name": "Ollama: draft follow-up",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        896,
+        3940
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput",
+      "notes": "Local LLM writes a follow-up of at most 50 words."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Reads the follow-up draft. If the model fails the draft says so, so a human writes it instead.\nconst prev = $('Pick follow-up').first().json;\nlet p = null;\ntry { p = JSON.parse($input.first().json.message.content); } catch (e) { p = null; }\nconst subject = (p && p.subject) || ('Re: ' + prev.company);\nconst body = (p && p.body) || 'The follow-up could not be generated automatically. Write it by hand.';\nconst out = Object.assign({}, prev, { followup_subject: subject, followup_body: String(body).replace(/\\n/g, '<br>') });\ndelete out.followup_request;\nreturn [{ json: out }];\n"
+      },
+      "id": "57ae0dd5-8a43-42ee-ab88-673c3ae61fae",
+      "name": "Parse follow-up",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        3940
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Config (follow-up)').first().json.cfg.sender.review_email }}",
+        "subject": "=[FOLLOW-UP DRAFT] {{ $json.company }} -> {{ $json.contact_email }}",
+        "message": "=Would reply to: {{ $json.contact_name }} ({{ $json.contact_email }})<br><br>Subject: {{ $json.followup_subject }}<br><br>{{ $json.followup_body }}<br><br>--<br>Reminder: send it as a reply inside the original thread, not as a new message.",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "ba37dae4-c27b-4542-8a1e-878655fdc345",
+      "name": "Send follow-up draft to myself",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1344,
+        3940
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Gmail Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "row_number": "={{ $('Parse follow-up').first().json.row_number }}",
+            "Followup_on": "={{ $now.toFormat('yyyy-MM-dd') }}"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "c8c1f6d4-ee3d-40ed-ad2c-a4e861ba6161",
+      "name": "Mark follow-up done",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1568,
+        3940
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Google Service Account"
+        }
+      },
+      "notes": "Marked only after the draft email was sent successfully, so a failure never loses a follow-up."
+    },
+    {
+      "parameters": {
+        "content": "## 6. Weekly funnel report (Mondays 08:00)\nEmails a summary of which source, signal and vertical converts best: leads, contacted, replies, interested.",
+        "height": 360,
+        "width": 1250,
+        "color": 2
+      },
+      "id": "e75e7735-3b2f-4a0f-8b10-e70832a02500",
+      "name": "Note: 6. Weekly funnel report (Mondays 08:00)",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        4380
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * 1"
+            }
+          ]
+        }
+      },
+      "id": "23cd2eb9-5948-41bf-af16-3b2c2a317bb4",
+      "name": "Schedule: weekly report",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        4540
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// CONFIG for the weekly report lane. This is the only place that decides who we target, what we say and how we send.\n// To switch to another profile, paste the matching section from config/<profile>.json over this object.\nconst CONFIG = {\n  \"timezone\": \"America/Argentina/Buenos_Aires\",\n  \"language\": \"en\",\n  \"sender\": {\n    \"name\": \"Your Name\",\n    \"title\": \"Business Development\",\n    \"company\": \"Your Company\",\n    \"signature\": \"Your Name\\nBusiness Development\\nYour Company\",\n    \"email\": \"you@example.com\",\n    \"review_email\": \"you@example.com\"\n  },\n  \"models\": {\n    \"email\": \"qwen2.5:14b\",\n    \"linkedin\": \"qwen3:4b\",\n    \"score\": \"qwen2.5:14b\",\n    \"classify\": \"llama3.2:3b\",\n    \"followup\": \"qwen3:4b\"\n  },\n  \"report_title\": \"Lead gen weekly report\"\n};\n\n// Pass every incoming item through and attach the config, so the next nodes can read it with\n// $('Config (report)').first().json.cfg\nreturn $input.all().map((it, i) => ({ json: Object.assign({}, it.json, { cfg: CONFIG }), pairedItem: { item: i } }));\n"
+      },
+      "id": "d3120d0f-5ee3-4b24-9722-439230bfa97b",
+      "name": "Config (report)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        4540
+      ],
+      "notes": "Profile settings for the weekly report lane (sender, models, rules, prompts). Edit here to retarget the pipeline."
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "adbf9334-6f15-4dbf-8d7a-7bc2470b0f99",
+      "name": "Read leads (report)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        4540
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Google Service Account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Weekly funnel: which source, signal and vertical converts best (leads > contacted > replies > interested).\nconst C = $('Config (report)').first().json.cfg;\nconst rows = $input.all().map((r) => r.json).filter((r) => String(r.Company || '').trim());\nconst isSent = (r) => ['sent', 'replied'].includes(String(r.Status || '').trim().toLowerCase()) || String(r.Sent_on || '').trim() !== '';\nconst replied = (r) => String(r.Reply_text || '').trim() !== '';\nconst interested = (r) => String(r.Interest || '').trim().toLowerCase() === 'yes';\nconst agg = (keyFn) => {\n  const m = new Map();\n  for (const r of rows) {\n    for (const k of keyFn(r)) {\n      const a = m.get(k) || { leads: 0, sent: 0, replied: 0, interested: 0, score: 0 };\n      a.leads++; a.score += Number(r.Score) || 0;\n      if (isSent(r)) a.sent++;\n      if (replied(r)) a.replied++;\n      if (interested(r)) a.interested++;\n      m.set(k, a);\n    }\n  }\n  return Array.from(m.entries()).sort((x, y) => y[1].leads - x[1].leads);\n};\nconst pct = (n, d) => d ? Math.round(100 * n / d) + '%' : '-';\nconst table = (title, entries) => {\n  const body = entries.map(([k, a]) => `<tr><td>${k}</td><td>${a.leads}</td><td>${(a.score / a.leads).toFixed(1)}</td><td>${a.sent}</td><td>${a.replied}</td><td>${pct(a.replied, a.sent)}</td><td>${a.interested}</td></tr>`).join('');\n  return `<h3>${title}</h3><table border=\"1\" cellpadding=\"6\" cellspacing=\"0\" style=\"border-collapse:collapse;font-size:13px\"><tr><th>${title}</th><th>Leads</th><th>Avg score</th><th>Contacted</th><th>Replies</th><th>Reply rate</th><th>Interested</th></tr>${body}</table>`;\n};\nconst weekAgo = Date.now() - 7 * (24 * 3600 * 1000);\nconst newThisWeek = rows.filter((r) => Date.parse(r.Added_on) >= weekAgo).length;\nconst bySource = agg((r) => [String(r.Source || '').trim() || '(no source)']);\nconst bySignal = agg((r) => { const s = String(r.Signals || '').split('|').map((x) => x.trim()).filter(Boolean); return s.length ? s : ['(no signals)']; });\nconst byVertical = agg((r) => [String(r.Vertical || '').trim() || '(no vertical)']);\nconst html = `<h2>${C.report_title}</h2><p>Leads in the pool: <b>${rows.length}</b>. New this week: <b>${newThisWeek}</b>. Contacted: <b>${rows.filter(isSent).length}</b>. Replies: <b>${rows.filter(replied).length}</b>. Interested: <b>${rows.filter(interested).length}</b>.</p>` +\n  table('Source', bySource) + table('Signal', bySignal) + table('Vertical', byVertical) +\n  '<p style=\"color:#666;font-size:12px\">Reply rate = replies / contacted. With few contacted leads per row, read it as a trend, not a conclusion.</p>';\nreturn [{ json: { subject: C.report_title, html } }];\n"
+      },
+      "id": "f8327495-aa5f-4632-b935-84f46b82b19a",
+      "name": "Build report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        4540
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Config (report)').first().json.cfg.sender.review_email }}",
+        "subject": "={{ $json.subject }}",
+        "message": "={{ $json.html }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "13592bb2-ef4c-40aa-9078-857464b48aa3",
+      "name": "Send weekly report",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        896,
+        4540
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Gmail Account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook: lead intake": {
+      "main": [
+        [
+          {
+            "node": "Parse intake lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse intake lead": {
+      "main": [
+        [
+          {
+            "node": "Get existing (intake)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get existing (intake)": {
+      "main": [
+        [
+          {
+            "node": "Check intake duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check intake duplicate": {
+      "main": [
+        [
+          {
+            "node": "Duplicate or invalid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append intake lead": {
+      "main": [
+        [
+          {
+            "node": "Respond: saved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Duplicate or invalid?": {
+      "main": [
+        [
+          {
+            "node": "Respond: skipped",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Append intake lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule: discover leads": {
+      "main": [
+        [
+          {
+            "node": "Config (discovery)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config (discovery)": {
+      "main": [
+        [
+          {
+            "node": "Get existing leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get existing leads": {
+      "main": [
+        [
+          {
+            "node": "Build Adzuna queries",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Build news queries",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Build Apollo queries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Adzuna queries": {
+      "main": [
+        [
+          {
+            "node": "Adzuna search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Adzuna search": {
+      "main": [
+        [
+          {
+            "node": "Parse Adzuna",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build news queries": {
+      "main": [
+        [
+          {
+            "node": "Google News RSS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google News RSS": {
+      "main": [
+        [
+          {
+            "node": "Parse news signals",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare weak candidates": {
+      "main": [
+        [
+          {
+            "node": "Apollo resolve org",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apollo resolve org": {
+      "main": [
+        [
+          {
+            "node": "Parse resolved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge weak sources": {
+      "main": [
+        [
+          {
+            "node": "Prepare weak candidates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Apollo queries": {
+      "main": [
+        [
+          {
+            "node": "Apollo ICP search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apollo ICP search": {
+      "main": [
+        [
+          {
+            "node": "Parse Apollo companies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge candidates": {
+      "main": [
+        [
+          {
+            "node": "Dedupe and pre-score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dedupe and pre-score": {
+      "main": [
+        [
+          {
+            "node": "Build score prompts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build score prompts": {
+      "main": [
+        [
+          {
+            "node": "Ollama: score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama: score": {
+      "main": [
+        [
+          {
+            "node": "Parse score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse score": {
+      "main": [
+        [
+          {
+            "node": "Append leads to sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Adzuna": {
+      "main": [
+        [
+          {
+            "node": "Merge weak sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse news signals": {
+      "main": [
+        [
+          {
+            "node": "Merge weak sources",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Parse Apollo companies": {
+      "main": [
+        [
+          {
+            "node": "Merge candidates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse resolved": {
+      "main": [
+        [
+          {
+            "node": "Merge candidates",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Schedule: outreach": {
+      "main": [
+        [
+          {
+            "node": "Config (outreach)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config (outreach)": {
+      "main": [
+        [
+          {
+            "node": "Read leads (outreach)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read leads (outreach)": {
+      "main": [
+        [
+          {
+            "node": "Pick lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick lead": {
+      "main": [
+        [
+          {
+            "node": "Contact provider?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hunter domain search": {
+      "main": [
+        [
+          {
+            "node": "Parse Hunter contact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Hunter contact": {
+      "main": [
+        [
+          {
+            "node": "Check duplicates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apollo find company": {
+      "main": [
+        [
+          {
+            "node": "Parse org",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse org": {
+      "main": [
+        [
+          {
+            "node": "Company found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apollo find people": {
+      "main": [
+        [
+          {
+            "node": "Pick person",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick person": {
+      "main": [
+        [
+          {
+            "node": "Person found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apollo enrich person": {
+      "main": [
+        [
+          {
+            "node": "Parse Apollo contact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Apollo contact": {
+      "main": [
+        [
+          {
+            "node": "Check duplicates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check duplicates": {
+      "main": [
+        [
+          {
+            "node": "Contact usable?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build prompts": {
+      "main": [
+        [
+          {
+            "node": "Ollama: draft email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama: draft email": {
+      "main": [
+        [
+          {
+            "node": "Ollama: draft LinkedIn",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama: draft LinkedIn": {
+      "main": [
+        [
+          {
+            "node": "Validate draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate draft": {
+      "main": [
+        [
+          {
+            "node": "Route by action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send email to lead": {
+      "main": [
+        [
+          {
+            "node": "Mark as sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send draft to myself": {
+      "main": [
+        [
+          {
+            "node": "Mark as drafted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send review alert": {
+      "main": [
+        [
+          {
+            "node": "Mark for review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contact provider?": {
+      "main": [
+        [
+          {
+            "node": "Hunter domain search",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Apollo find company",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Company found?": {
+      "main": [
+        [
+          {
+            "node": "Apollo find people",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Check duplicates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Person found?": {
+      "main": [
+        [
+          {
+            "node": "Apollo enrich person",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Check duplicates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contact usable?": {
+      "main": [
+        [
+          {
+            "node": "Build prompts",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark as discarded",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by action": {
+      "main": [
+        [
+          {
+            "node": "Send email to lead",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send draft to myself",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send review alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail trigger: new emails": {
+      "main": [
+        [
+          {
+            "node": "Config (replies)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config (replies)": {
+      "main": [
+        [
+          {
+            "node": "Read leads (replies)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read leads (replies)": {
+      "main": [
+        [
+          {
+            "node": "Match replies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Match replies": {
+      "main": [
+        [
+          {
+            "node": "Ollama: classify reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama: classify reply": {
+      "main": [
+        [
+          {
+            "node": "Parse interest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse interest": {
+      "main": [
+        [
+          {
+            "node": "Update lead with reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule: follow-up": {
+      "main": [
+        [
+          {
+            "node": "Config (follow-up)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config (follow-up)": {
+      "main": [
+        [
+          {
+            "node": "Read leads (follow-up)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read leads (follow-up)": {
+      "main": [
+        [
+          {
+            "node": "Pick follow-up",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick follow-up": {
+      "main": [
+        [
+          {
+            "node": "Ollama: draft follow-up",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama: draft follow-up": {
+      "main": [
+        [
+          {
+            "node": "Parse follow-up",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse follow-up": {
+      "main": [
+        [
+          {
+            "node": "Send follow-up draft to myself",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send follow-up draft to myself": {
+      "main": [
+        [
+          {
+            "node": "Mark follow-up done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule: weekly report": {
+      "main": [
+        [
+          {
+            "node": "Config (report)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config (report)": {
+      "main": [
+        [
+          {
+            "node": "Read leads (report)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read leads (report)": {
+      "main": [
+        [
+          {
+            "node": "Build report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build report": {
+      "main": [
+        [
+          {
+            "node": "Send weekly report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Argentina/Buenos_Aires",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

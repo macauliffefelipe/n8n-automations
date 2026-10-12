@@ -1,0 +1,267 @@
+{
+  "name": "Inbox Triage",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "// PREFILTRO: descarta lo que no vale la pena clasificar y limpia el cuerpo del mail.\n// Editá las listas de abajo para ajustar.\n\nconst SKIP_LABELS = ['CATEGORY_PROMOTIONS', 'CATEGORY_SOCIAL', 'SPAM', 'TRASH', 'DRAFT'];\n// Dominios o remitentes que nunca te interesan (substring, minúsculas)\nconst BLOCKLIST = ['@medium.com', '@substack.com', 'youtube.com', '@facebookmail.com', 'jobalerts-noreply@linkedin.com', 'alert@indeed.com'];\nconst MAX_CHARS = 2500;\n\nfunction htmlToText(html) {\n  return String(html || '')\n    .replace(/<(script|style|head)[\\s\\S]*?<\\/\\1>/gi, ' ')\n    .replace(/<br\\s*\\/?>/gi, '\\n')\n    .replace(/<\\/(p|div|tr|li|h\\d)>/gi, '\\n')\n    .replace(/<[^>]+>/g, ' ')\n    .replace(/&nbsp;/gi, ' ')\n    .replace(/&amp;/gi, '&')\n    .replace(/&lt;/gi, '<')\n    .replace(/&gt;/gi, '>')\n    .replace(/&quot;/gi, '\"')\n    .replace(/&#39;/gi, \"'\");\n}\n\nfunction limpiarCuerpo(txt) {\n  let t = String(txt || '').replace(/\\r/g, '');\n  // Cortar el hilo citado (respuestas anteriores)\n  const cortes = [\n    /^On .{5,200} wrote:\\s*$/m,\n    /^El .{5,200} escribió:\\s*$/m,\n    /^Em .{5,200} escreveu:\\s*$/m,\n    /^-{2,}\\s*Original Message\\s*-{2,}/mi,\n    /^-{2,}\\s*Mensaje original\\s*-{2,}/mi,\n    /^(From|De):.*\\n(Sent|Enviado|Date|Fecha|Data):/m,\n  ];\n  for (const re of cortes) {\n    const m = t.match(re);\n    if (m && m.index > 0) t = t.slice(0, m.index);\n  }\n  t = t\n    .split('\\n')\n    .filter((l) => !l.trim().startsWith('>'))\n    .join('\\n')\n    .replace(/https?:\\/\\/\\S{60,}/g, '[link]') // links de tracking larguísimos\n    .replace(/[ \\t]+/g, ' ')\n    .replace(/\\n\\s*\\n+/g, '\\n')\n    .trim();\n  return t.length > MAX_CHARS ? t.slice(0, MAX_CHARS) + ' [...]' : t;\n}\n\nconst out = [];\nconst items = $input.all();\n\nfor (let i = 0; i < items.length; i++) {\n  const j = items[i].json;\n  const labels = j.labelIds || [];\n\n  // Enviados por vos, borradores, promos, social\n  if (labels.some((l) => SKIP_LABELS.includes(l))) continue;\n  if (labels.includes('SENT') && !labels.includes('INBOX')) continue;\n\n  const remitente = (j.from && j.from.value && j.from.value[0]) || {};\n  const email = String(remitente.address || '').toLowerCase();\n  const nombre = remitente.name || email;\n\n  if (BLOCKLIST.some((b) => email.includes(b))) continue;\n\n  const headers = j.headers || {};\n  const masivo = Boolean(headers['list-unsubscribe']) || /precedence:\\s*(bulk|list)/i.test(headers['precedence'] || '');\n\n  const cuerpoBase = j.text && String(j.text).trim() ? j.text : htmlToText(j.html);\n  const ts = Date.parse(j.date) || Date.now();\n\n  out.push({\n    json: {\n      message_id: j.id,\n      thread_id: j.threadId,\n      de_nombre: nombre,\n      de_email: email,\n      asunto: j.subject || '(sin asunto)',\n      ts,\n      masivo,\n      cuerpo: limpiarCuerpo(cuerpoBase),\n    },\n    pairedItem: { item: i },\n  });\n}\n\nreturn out;\n"
+      },
+      "id": "53e84a33-cbc6-4478-9c54-2f50a6a8467c",
+      "name": "Prefiltro",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2400,
+        2736
+      ],
+      "notes": "Drops promotions, social, spam, mass newsletters and job-alert senders, and trims quoted threads, so the model only reads mail that could matter."
+    },
+    {
+      "parameters": {
+        "jsCode": "// ARMAR PROMPT: acá ajustás el modelo, tu perfil y cómo se clasifica.\n// El modelo solo extrae datos (tema, si pide respuesta). La urgencia la decide el nodo Parsear con reglas fijas.\n\nconst MODELO = 'qwen2.5:7b'; // o el que uses en Pepe\n\nconst PERFIL = `La persona busca trabajo remoto (contractor o empleado) en Revenue Operations, Sales Ops, Business Ops o automatización, y además tiene un negocio propio de automatización para pymes. Recibe mails en español, inglés y portugués. EDITÁ ESTE TEXTO con tu propio perfil.`;\n\nconst SYSTEM = `Analizás un mail que recibió la persona y devolvés SOLO JSON.\n\nPERFIL DE LA PERSONA:\n${PERFIL}\n\nCAMPO \"tema\" (elegí uno):\n- \"busqueda_laboral\": sobre una postulación o un puesto para la persona. Recruiter o empresa que le escribe, entrevista, assessment, oferta, contrato, rechazo, confirmación o actualización de una postulación (Greenhouse, Lever, Ashby, Workable, Workday).\n- \"cliente_o_lead\": alguien que es o podría ser cliente de la persona (su negocio propio o su empleador actual). Un negocio que pregunta por sus servicios, precio, propuesta o reunión, responde a un mail de prospección, o un cliente actual que avisa algo, pide algo o reporta un problema.\n- \"alerta_empleos\": newsletters o listados automáticos de ofertas de trabajo (job alerts, \"new jobs this week\", \"jobs you may like\"). No es una postulación de la persona.\n- \"venta_a_felipe\": alguien que le quiere vender un servicio o producto a la persona (agencias de leads, SaaS, cold emails).\n- \"servicio_que_paga\": facturas, cobros, recibos o avisos de cuentas de herramientas que la persona usa (hosting, SaaS, bancos, apps).\n- \"otro\": todo lo demás (marketing, redes, cursos, notificaciones, spam).\n\nCAMPO \"pide_respuesta\": true si el mail le hace una pregunta a la persona o le pide hacer algo: dar disponibilidad, agendar o confirmar una reunión o entrevista, pasar precio o propuesta, completar un assessment, mandar un documento, aceptar una oferta, resolver un problema. false si solo informa.\n\nCAMPO \"resumen\": una oración en español, máximo 25 palabras: quién escribe y qué quiere. Solo texto en español, sin JSON.\nCAMPO \"accion\": máximo 6 palabras en español (ej: \"Responder con disponibilidad\", \"Pasar precio y agendar llamada\", \"Ninguna\").\n\nEJEMPLOS:\n- \"Could you share your availability for a call?\" de un recruiter -> tema busqueda_laboral, pide_respuesta true\n- \"We received your application\" de Greenhouse -> tema busqueda_laboral, pide_respuesta false\n- \"You are invited to complete an assessment before Friday\" -> tema busqueda_laboral, pide_respuesta true\n- \"Hola, ¿cuánto sale el bot y cuándo hablamos?\" de un negocio -> tema cliente_o_lead, pide_respuesta true\n- \"Te aviso que el lunes cerramos\" de un cliente -> tema cliente_o_lead, pide_respuesta false\n- \"15 new remote jobs for you\" -> tema alerta_empleos, pide_respuesta false\n- \"I help agencies book more calls, worth a chat?\" -> tema venta_a_felipe, pide_respuesta false`;\n\nconst SCHEMA = {\n  type: 'object',\n  properties: {\n    tema: { type: 'string', enum: ['busqueda_laboral', 'cliente_o_lead', 'alerta_empleos', 'venta_a_felipe', 'servicio_que_paga', 'otro'] },\n    pide_respuesta: { type: 'boolean' },\n    resumen: { type: 'string' },\n    accion: { type: 'string' },\n  },\n  required: ['tema', 'pide_respuesta', 'resumen', 'accion'],\n};\n\nreturn $input.all().map((item, i) => {\n  const m = item.json;\n  const user = `Remitente: ${m.de_nombre} <${m.de_email}>\nAsunto: ${m.asunto}\nEnvío masivo (tiene link de desuscripción): ${m.masivo ? 'sí' : 'no'}\nCuerpo:\n${m.cuerpo}`;\n\n  return {\n    json: {\n      ...m,\n      ollama_request: {\n        model: MODELO,\n        stream: false,\n        format: SCHEMA,\n        keep_alive: '15m',\n        options: { temperature: 0, num_ctx: 4096 },\n        messages: [\n          { role: 'system', content: SYSTEM },\n          { role: 'user', content: user },\n        ],\n      },\n    },\n    pairedItem: { item: i },\n  };\n});\n"
+      },
+      "id": "80329d12-6d19-492c-9b96-13adf328fdaf",
+      "name": "Armar prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2624,
+        2736
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// PARSEAR: combina la respuesta del modelo con los datos del mail.\n// Si Ollama falla, usa palabras clave para no perder nada importante.\n\nconst CUENTA = 'you@example.com'; // para que el link abra la cuenta correcta\n\n// Reglas: qué temas te interesan y cuándo es urgente\nconst TEMA_A_CATEGORIA = { busqueda_laboral: 'laboral', cliente_o_lead: 'cliente_lead' };\nconst TEMAS = ['busqueda_laboral', 'cliente_o_lead', 'alerta_empleos', 'venta_a_felipe', 'servicio_que_paga', 'otro'];\n\nconst RE_LABORAL = /(interview|entrevista|application|postulaci[oó]n|candidat|recruit|reclut|hiring|vacante|job offer|offer letter|oferta laboral|assessment|next steps|pr[oó]ximos pasos|greenhouse|lever\\.co|ashbyhq|workable|smartrecruiters|teamtailor|recruitee|jobvite|bamboohr|myworkday)/i;\nconst RE_CLIENTE = /(propuesta|proposal|presupuesto|cotizaci[oó]n|quote|pricing|precio|reuni[oó]n|meeting|demo|contrato|interesad|interested|let's talk|hablemos|or[cç]amento)/i;\nconst RE_URGENTE = /(entrevista|interview|schedule|agendar|calendly|disponibilidad|availability|offer|oferta|urgente|urgent|asap|deadline|plazo)/i;\n// Red de seguridad: en búsqueda laboral, estas frases siempre piden acción aunque el modelo diga que no\nconst RE_ACCION_LABORAL = /(assessment|coding challenge|take-home|invited you to|te invit|schedule your|pick a time|book a time|availability|disponibilidad|agend[aá]|please sign|firm[aá]|docusign|\\boffer\\b|oferta de trabajo)/i;\n\nfunction limpiarResumen(txt, asunto) {\n  let t = String(txt || '').split(/[\\u3000-\\u9fff\\uac00-\\ud7af{`]/)[0].trim(); // corta texto basura del modelo\n  if (t.length > 220) t = t.slice(0, 217).trim() + '...';\n  return t || asunto;\n}\n\nfunction heuristica(m) {\n  const txt = `${m.asunto}\\n${m.cuerpo}`;\n  let categoria = 'otro';\n  if (RE_LABORAL.test(txt)) categoria = 'laboral';\n  else if (RE_CLIENTE.test(txt) && !m.masivo) categoria = 'cliente_lead';\n  else if (!m.masivo) categoria = 'sin_clasificar';\n\n  let urgencia = 'ninguna';\n  if (categoria === 'laboral' || categoria === 'cliente_lead') {\n    urgencia = RE_URGENTE.test(txt) ? 'urgente' : 'normal';\n  } else if (categoria === 'sin_clasificar') {\n    urgencia = 'normal';\n  }\n  return { categoria, tema: '-', urgencia, resumen: m.asunto, accion: 'Revisar (Ollama no respondió)' };\n}\n\nconst base = $('Armar prompt').all();\nconst respuestas = $input.all();\n\nreturn respuestas.map((r, i) => {\n  // Empareja por pairedItem (no por posición); si el linaje se pierde, cae al índice\n  const m = (() => { try { return $('Armar prompt').itemMatching(i).json; } catch (e) { return base[i].json; } })();\n  let res = null;\n  let fuente = 'ollama';\n\n  try {\n    const content = r.json && r.json.message && r.json.message.content;\n    if (!content) throw new Error('sin respuesta');\n    const p = JSON.parse(content);\n    if (!TEMAS.includes(p.tema) || typeof p.pide_respuesta !== 'boolean') throw new Error('valores inválidos');\n    const categoria = TEMA_A_CATEGORIA[p.tema] || 'otro';\n    const pide = p.pide_respuesta || (categoria === 'laboral' && RE_ACCION_LABORAL.test(`${m.asunto}\\n${m.cuerpo}`));\n    res = {\n      categoria,\n      tema: p.tema,\n      urgencia: categoria === 'otro' ? 'ninguna' : pide ? 'urgente' : 'normal',\n      resumen: limpiarResumen(p.resumen, m.asunto),\n      accion: String(p.accion || '').trim() || 'Ninguna',\n    };\n  } catch (e) {\n    res = heuristica(m);\n    fuente = 'heuristica';\n  }\n\n  // Coherencia entre categoría y urgencia\n  if (res.categoria === 'otro') res.urgencia = 'ninguna';\n  if (res.categoria !== 'otro' && res.urgencia === 'ninguna') res.urgencia = 'normal';\n  if (res.urgencia === 'urgente' && /^ninguna$/i.test(res.accion)) res.accion = 'Revisar y responder';\n\n  const fecha = new Date(m.ts).toLocaleString('es-AR', {\n    timeZone: 'America/Argentina/Buenos_Aires',\n    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',\n  });\n\n  return {\n    json: {\n      fecha,\n      ts: m.ts,\n      categoria: res.categoria,\n      urgencia: res.urgencia,\n      tema: res.tema,\n      de: m.de_nombre,\n      email: m.de_email,\n      asunto: m.asunto,\n      resumen: res.resumen,\n      accion: res.accion,\n      fuente,\n      link: `https://mail.google.com/mail/?authuser=${encodeURIComponent(CUENTA)}#all/${m.message_id}`,\n      message_id: m.message_id,\n    },\n    pairedItem: { item: i },\n  };\n});\n"
+      },
+      "id": "0a4bd604-4853-4413-93a3-47f421f63a87",
+      "name": "Parsear",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3200,
+        2736
+      ],
+      "notes": "The model only extracts facts (topic, does it ask for a reply). Urgency is decided here with fixed rules, and a keyword fallback covers model failures."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ab9172ae-dc3a-42ea-9f75-7e0bba62d05b",
+              "leftValue": "={{ $json.urgencia }}",
+              "rightValue": "urgente",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "2b313280-1fbe-4d8d-b30a-986a466263a9",
+      "name": "Es urgente?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3424,
+        2736
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// AVISO URGENTE: arma el mensaje de Telegram (HTML) para cada mail urgente.\n\nconst ETIQUETA = { laboral: 'Búsqueda laboral', cliente_lead: 'Cliente / lead', sin_clasificar: 'Sin clasificar' };\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n\nreturn $input.all().map((item, i) => {\n  const m = item.json;\n  const lineas = [\n    `<b>MAIL URGENTE · ${esc(ETIQUETA[m.categoria] || m.categoria)}</b>`,\n    '',\n    `<b>De:</b> ${esc(m.de)} (${esc(m.email)})`,\n    `<b>Asunto:</b> ${esc(m.asunto)}`,\n    '',\n    esc(m.resumen),\n    '',\n    `<b>Acción:</b> ${esc(m.accion)}`,\n    `<a href=\"${esc(m.link)}\">Abrir en Gmail</a>`,\n  ];\n  return { json: { mensaje: lineas.join('\\n') }, pairedItem: { item: i } };\n});\n"
+      },
+      "id": "197dfdd3-d7d0-4b24-996f-1f7c35843254",
+      "name": "Armar aviso",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3648,
+        2736
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "={{ $json.mensaje }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "disable_web_page_preview": true,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "211b58db-a1ec-416b-b134-b1c90303822f",
+      "name": "Aviso Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3872,
+        2736
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Telegram Bot"
+        }
+      },
+      "notes": "Only urgent mail reaches the phone: a recruiter asking for availability, an assessment, a client question."
+    },
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyX",
+              "value": 10,
+              "unit": "minutes"
+            }
+          ]
+        },
+        "simple": false,
+        "filters": {
+          "q": "-category:promotions -category:social -from:me",
+          "readStatus": "both"
+        },
+        "options": {}
+      },
+      "id": "43c7bad1-02dd-408e-aebf-1ab8c5d416b1",
+      "name": "Gmail nuevo mail",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        2176,
+        2592
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Gmail Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:11434/api/chat",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.ollama_request) }}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "id": "5ded5fa0-1407-49c7-9fd5-35bd8b5cfcc3",
+      "name": "Ollama clasificar",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2848,
+        2736
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput",
+      "notes": "Sends the request built in \"Armar prompt\" as is: model, JSON schema, temperature 0, context size. If Ollama is down, \"Parsear\" falls back to keyword rules so nothing important is lost."
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Prefiltro": {
+      "main": [
+        [
+          {
+            "node": "Armar prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar prompt": {
+      "main": [
+        [
+          {
+            "node": "Ollama clasificar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parsear": {
+      "main": [
+        [
+          {
+            "node": "Es urgente?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Es urgente?": {
+      "main": [
+        [
+          {
+            "node": "Armar aviso",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar aviso": {
+      "main": [
+        [
+          {
+            "node": "Aviso Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama clasificar": {
+      "main": [
+        [
+          {
+            "node": "Parsear",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail nuevo mail": {
+      "main": [
+        [
+          {
+            "node": "Prefiltro",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false,
+    "timezone": "America/Argentina/Buenos_Aires"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

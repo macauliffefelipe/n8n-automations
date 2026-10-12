@@ -1,0 +1,11 @@
+{
+  "name": "n8n-automations-tests",
+  "private": true,
+  "description": "Offline checks for the Code nodes of the published workflows (no n8n, no network, no credentials needed)",
+  "scripts": {
+    "test": "node run_expense_and_jobsearch.js && node run_lead.js"
+  },
+  "dependencies": {
+    "luxon": "^3.7.2"
+  }
+}

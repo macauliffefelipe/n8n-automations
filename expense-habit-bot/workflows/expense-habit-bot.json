@@ -1,0 +1,1977 @@
+{
+  "name": "Expense and Habit Bot",
+  "nodes": [
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.reply }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1472,
+        5264
+      ],
+      "id": "58bd21c6-6f23-44dd-a2ad-a0481d60df3b",
+      "name": "Enviar Recordatorio",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// n8n Code node: \"Armar Recordatorio\"   ->  Mode: Run Once for All Items\n// Entrada: filas de Habitos_Log. Config desde \"Leer Config\".\n// ============================================================\n\nconst ajustes = $('Settings').first().json;\nconst CHAT_ID = String(ajustes.cfg_chat_id || '');\nconst SALUDO = ajustes.cfg_greeting || 'che';\n\nif (!/^-?\\d+$/.test(CHAT_ID)) {\n  throw new Error('Pone tu chat ID de Telegram en el nodo \"Settings\"');\n}\n\nconst TZ = 'America/Argentina/Buenos_Aires';\nconst hoy = DateTime.now().setZone(TZ).startOf('day');\nconst lunes = hoy.startOf('week');\nconst hoyStr = hoy.toFormat('yyyy-MM-dd');\nconst lunesStr = lunes.toFormat('yyyy-MM-dd');\n\n// Uso Dia/Mes/Anio y no Fecha: son numeros y no dependen de como\n// Google Sheets serialice la fecha.\nfunction clave(r) {\n  const d = Number(r['Dia']), m = Number(r['Mes']), a = Number(r['Anio']);\n  if (!d || !m || !a) return '';\n  return a + '-' + String(m).padStart(2, '0') + '-' + String(d).padStart(2, '0');\n}\nfunction si(v) { return String(v == null ? '' : v).trim().toUpperCase() === 'SI'; }\nfunction nombre(r) { return String(r['Habito'] || '').trim(); }\n\nconst cfg = $('Leer Config').all()\n  .map((i) => i.json)\n  .filter((r) => r && r['Habito'] && String(r['Activo'] || '').trim().toUpperCase() !== 'NO');\n\nconst log = $input.all().map((i) => i.json).filter((r) => r && r['Habito']);\n\n// \"Cumple\" ya se calcula sobre el total del dia en \"Normalizar Habito\":\n// alcanza con que una fila del dia diga SI.\nconst hechoHoy = new Set(\n  log.filter((r) => clave(r) === hoyStr && si(r['Cumple'])).map(nombre),\n);\n\nconst semana = {};\nfor (const r of log) {\n  const k = clave(r);\n  if (!k || k < lunesStr || k > hoyStr) continue;\n  if (!si(r['Cumple'])) continue;\n  const n = nombre(r);\n  if (!semana[n]) semana[n] = new Set();\n  semana[n].add(k);\n}\n\nconst diarios = cfg.filter((h) => (Number(h['MetaSemanal']) || 7) >= 6);\nconst frecuencia = cfg.filter((h) => (Number(h['MetaSemanal']) || 7) < 6);\n\nconst faltanHoy = diarios.map(nombre).filter((n) => !hechoHoy.has(n));\nconst diasQuedan = 8 - hoy.weekday;   // incluye hoy\n\nconst lineasSemana = frecuencia.map((h) => {\n  const n = nombre(h);\n  const meta = Number(h['MetaSemanal']) || 0;\n  const hecho = semana[n] ? semana[n].size : 0;\n  const restan = Math.max(0, meta - hecho);\n  let marca = '';\n  if (restan === 0) marca = ' ✅';\n  else if (restan > diasQuedan) marca = ' ⚠️';\n  return '• ' + n + ' ' + hecho + '/' + meta + marca;\n});\n\nconst out = [];\nout.push('🔔 Cierre del día');\nout.push('');\nif (faltanHoy.length === 0) {\n  out.push('Todo al día, ' + SALUDO + '. Nada pendiente.');\n} else {\n  out.push('Te faltan hoy:');\n  for (const n of faltanHoy) {\n    out.push(n.toLowerCase() === 'pasos'\n      ? '• ' + n + ' (mirá el reloj, todavía llegás)'\n      : '• ' + n);\n  }\n}\nif (lineasSemana.length) {\n  out.push('');\n  out.push('Semana (desde el lunes, quedan ' + diasQuedan + ' días):');\n  for (const l of lineasSemana) out.push(l);\n}\n\nreturn [{ json: { chat_id: CHAT_ID, reply: out.join('\\n') } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1248,
+        5264
+      ],
+      "id": "4beacbae-7f93-4ef4-bab5-52ff61adcb67",
+      "name": "Armar Recordatorio"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Habitos_Log",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1024,
+        5264
+      ],
+      "id": "ddfd534e-53ca-4204-a120-1053d7431a9b",
+      "name": "Leer Log",
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Google Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Config_Habitos",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        800,
+        5264
+      ],
+      "id": "a56510bb-0aa6-4887-8d03-788e9eb1037a",
+      "name": "Leer Config",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Google Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 19 * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -96,
+        5264
+      ],
+      "id": "239f849f-78be-4858-9598-d5cffa73a63e",
+      "name": "Todos los dias 19:00"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('User Lookup').first().json.chat_id }}",
+        "text": "={{ $('Buscar Filas a Borrar').first().json.reply }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        4064,
+        3888
+      ],
+      "id": "d2c16d82-7dd6-4299-8cfb-2dd1d3a593ca",
+      "name": "Responder Deshacer",
+      "executeOnce": true,
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Ultimo_Registro",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Clave": "ultimo",
+            "IDLote": "-",
+            "Hoja": "-",
+            "Resumen": "=(borrado) {{ $('Resolver Puntero').first().json.resumen }}",
+            "Timestamp": "={{ $now.toISO() }}"
+          },
+          "matchingColumns": [
+            "Clave"
+          ],
+          "schema": [
+            {
+              "id": "Clave",
+              "displayName": "Clave",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "IDLote",
+              "displayName": "IDLote",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Hoja",
+              "displayName": "Hoja",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Resumen",
+              "displayName": "Resumen",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Timestamp",
+              "displayName": "Timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        3840,
+        3888
+      ],
+      "id": "0405bbed-267f-49d2-89dd-eea32f7d5559",
+      "name": "Invalidar Puntero",
+      "executeOnce": true,
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Google Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "delete",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $json.hoja }}",
+          "mode": "name"
+        },
+        "startIndex": "={{ $json.fila }}"
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        3616,
+        3888
+      ],
+      "id": "e73c0f02-4b90-435d-ba15-302ccc15e121",
+      "name": "Borrar Fila",
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Google Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c-encontrado",
+              "leftValue": "={{ $json.encontrado }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3392,
+        3936
+      ],
+      "id": "b76033ca-7ba2-4aa2-9647-eb06b5db0ab3",
+      "name": "Encontrado?"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// n8n Code node: \"Buscar Filas a Borrar\"   ->  Mode: Run Once for All Items\n//\n// Entrada: todas las filas de la hoja objetivo (Gastos o Habitos_Log).\n// Usa:     \"Resolver Puntero\" -> hoja + idLote del ultimo guardado.\n//\n// Devuelve los numeros de fila a borrar, de mayor a menor: borrar de\n// abajo hacia arriba evita que los indices se corran.\n//\n// Busca por ID y no por \"ultima fila\": si la planilla se toco a mano,\n// \"la ultima fila\" ya no es la que hay que borrar. Usa row_number, que\n// el nodo de Sheets trae en cada fila, en vez de calcularlo por indice.\n// ============================================================\n\nconst saludo = (() => {\n  try { return $('User Lookup').first().json.user.greeting || 'che'; }\n  catch (e) { return 'che'; }\n})();\n\nconst { idLote, hoja, resumen } = $('Resolver Puntero').first().json;\n\nconst objetivo = [];\nconst todas = $input.all();\nconst col = (r, nombre) => {\n  const k = Object.keys(r).find((x) => x.trim().toLowerCase() === nombre);\n  return k ? String(r[k] == null ? '' : r[k]).trim() : '';\n};\ntodas.forEach((i, idx) => {\n  const id = col(i.json, 'id');\n  if (id && (id === idLote || id.startsWith(idLote + '-'))) {\n    objetivo.push(Number(i.json.row_number) || idx + 2);\n  }\n});\n\nif (!objetivo.length) {\n  return [{\n    json: {\n      encontrado: false,\n      reply: 'Ese registro ya no está, ' + saludo + '. Puede que lo hayas borrado a mano.' +\n        ' [debug: busqué ' + idLote + ' en ' + todas.length + ' filas de ' + hoja + ']',\n    },\n  }];\n}\n\n// De mayor a menor, sin repetidos\nconst filas = [...new Set(objetivo)].sort((a, b) => b - a);\n\nreturn filas.map((fila) => ({\n  json: {\n    encontrado: true,\n    hoja,\n    fila,\n    idLote,\n    reply: '🗑️ Borrado: ' + (resumen || 'el último registro') +\n      '\\n\\nMandámelo de nuevo como corresponda, ' + saludo + '.',\n  },\n}));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3168,
+        3936
+      ],
+      "id": "b98d0ab6-3c4c-4d6e-acdb-12ffe0a97127",
+      "name": "Buscar Filas a Borrar"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $json.hoja }}",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        2944,
+        3936
+      ],
+      "id": "9c5240d2-f6d6-40c8-9630-ad9076f75197",
+      "name": "Leer Hoja Objetivo",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Google Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c-hayPuntero",
+              "leftValue": "={{ $json.hayPuntero }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2720,
+        3936
+      ],
+      "id": "d04b2cf4-f77e-45dc-919b-c8b0d3888e53",
+      "name": "Hay Puntero?"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// n8n Code node: \"Resolver Puntero\"   ->  Mode: Run Once for All Items\n//\n// Entrada: filas de Ultimo_Registro. Devuelve SIEMPRE un solo item,\n// asi \"Leer Hoja Objetivo\" corre una sola vez (antes corria una vez por\n// cada fila del historial y el borrado se multiplicaba).\n//\n// Prioriza la fila con Clave = \"ultimo\". Si no existe (hoja vieja,\n// solo append), usa la ultima fila.\n// ============================================================\n\nconst saludo = (() => {\n  try { return $('User Lookup').first().json.user.greeting || 'che'; }\n  catch (e) { return 'che'; }\n})();\n\nconst filas = $input.all().map((i) => i.json).filter((r) => r && Object.keys(r).length);\nconst puntero = [...filas].reverse().find((r) => String(r['Clave'] || '').trim() === 'ultimo') ||\n  filas[filas.length - 1] || {};\n\nconst idLote = String(puntero['IDLote'] || '').trim();\nconst hoja = String(puntero['Hoja'] || '').trim();\nconst valido = idLote && idLote !== '-' && ['Gastos', 'Habitos_Log'].includes(hoja);\n\nreturn [{\n  json: {\n    hayPuntero: !!valido,\n    idLote,\n    hoja,\n    resumen: String(puntero['Resumen'] || '').trim(),\n    reply: valido ? '' : 'No tengo nada reciente para borrar, ' + saludo + '.',\n  },\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2496,
+        3936
+      ],
+      "id": "c87e903d-9458-4840-8d3f-28ce9f2e8b67",
+      "name": "Resolver Puntero"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Ultimo_Registro",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        2208,
+        3936
+      ],
+      "id": "13f29420-6143-457c-bfc2-0c052bbcb25c",
+      "name": "Leer Ultimo Registro",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Google Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('User Lookup').first().json.chat_id }}",
+        "text": "={{ $json.reply }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3616,
+        4176
+      ],
+      "id": "a7d6465c-54c5-4dd1-a725-c8251f53f8c1",
+      "name": "Responder Sin Guardar",
+      "executeOnce": true,
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Armar Puntero').first().json.chat_id }}",
+        "text": "={{ $('Armar Puntero').first().json.reply }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        4064,
+        4496
+      ],
+      "id": "161e11ce-6ae3-43ab-9ad8-d82c3d3a3ece",
+      "name": "Responder",
+      "executeOnce": true,
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Ultimo_Registro",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Clave": "={{ $json.Clave }}",
+            "IDLote": "={{ $json.IDLote }}",
+            "Hoja": "={{ $json.Hoja }}",
+            "Resumen": "={{ $json.Resumen }}",
+            "Timestamp": "={{ $json.Timestamp }}"
+          },
+          "matchingColumns": [
+            "Clave"
+          ],
+          "schema": [
+            {
+              "id": "Clave",
+              "displayName": "Clave",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "IDLote",
+              "displayName": "IDLote",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Hoja",
+              "displayName": "Hoja",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Resumen",
+              "displayName": "Resumen",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Timestamp",
+              "displayName": "Timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        3840,
+        4496
+      ],
+      "id": "dbfc6f1f-c33a-4dad-80a5-c0f4f89188ff",
+      "name": "Guardar Puntero",
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Google Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// n8n Code node: \"Armar Puntero\"   ->  Mode: Run Once for All Items\n//\n// Corre despues de guardar (habito o gasto) y produce UNA fila para\n// Ultimo_Registro. \"Guardar Puntero\" hace Append or Update sobre la\n// columna Clave = \"ultimo\", asi la hoja tiene siempre una sola fila.\n//\n// No lee $input: el nodo de Sheets devuelve solo las columnas escritas\n// (ID, Habito...), no los campos internos (idLote, esHabito, reply).\n// Por eso busca el nodo que armo los datos, en orden de prioridad.\n// Tambien arma el texto para \"Responder\".\n// ============================================================\n\nfunction salida(nodo) {\n  try { return $(nodo).all().map((i) => i.json); }\n  catch (e) { return []; }   // nodo que no corrio en esta ejecucion\n}\n\nconst items = ['Normalizar Habito', 'Parse Agente', 'Detectar Intencion']\n  .map(salida)\n  .find((arr) => arr.length && arr[0].guardar === true) || [];\n\nif (!items.length) throw new Error('Armar Puntero: no encontre que se guardo');\n\nconst first = items[0];\nconst esHabito = first.esHabito === true;\n\nconst resumen = esHabito\n  ? items.map((r) => r.habito + (r.unidad === 'check' ? '' : ' ' + r.valor + ' ' + r.unidad)).join(', ')\n  : items.map((r) => r.categoria + ' ' + (r.moneda === 'USD' ? 'US$' : '$') + r.valor).join(', ');\n\nreturn [{\n  json: {\n    Clave: 'ultimo',\n    IDLote: String(first.idLote || first.id || ''),\n    Hoja: esHabito ? 'Habitos_Log' : 'Gastos',\n    Resumen: resumen,\n    Timestamp: DateTime.now().setZone('America/Argentina/Buenos_Aires').toISO(),\n    chat_id: $('User Lookup').first().json.chat_id,\n    reply: first.reply || 'Listo!',\n  },\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3616,
+        4496
+      ],
+      "id": "78c0db85-0033-4b49-a7c1-3239f4b413d6",
+      "name": "Armar Puntero"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Gastos",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Fecha": "={{ $json.fecha }}",
+            "Tipo": "={{ $json.tipo }}",
+            "Categoría": "={{ $json.categoria }}",
+            "Detalle": "={{ $json.detalle }}",
+            "Moneda": "={{ $json.moneda }}",
+            "Valor Original": "={{ $json.valor }}",
+            "Origen": "={{ $json.origen }}",
+            "ID": "={{ $json.id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Fecha",
+              "displayName": "Fecha",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Día",
+              "displayName": "Día",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Mes",
+              "displayName": "Mes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Año",
+              "displayName": "Año",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Tipo",
+              "displayName": "Tipo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Categoría",
+              "displayName": "Categoría",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Detalle",
+              "displayName": "Detalle",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Moneda",
+              "displayName": "Moneda",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Valor Original",
+              "displayName": "Valor Original",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Valor ARS",
+              "displayName": "Valor ARS",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Valor USD",
+              "displayName": "Valor USD",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Origen",
+              "displayName": "Origen",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ID",
+              "displayName": "ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        2944,
+        4688
+      ],
+      "id": "6fba0fec-f326-4d3b-8a41-d0645cc4092a",
+      "name": "Guardar Gasto",
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Google Service Account"
+        }
+      },
+      "notes": "Origen = \"reglas\" (regex router) or \"llm\" (local model fallback). Add an \"Origen\" column to the tab. Also add an \"ID\" column: \"undo\" finds the rows to delete by this ID."
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Habitos_Log",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Fecha": "={{ $json.fecha }}",
+            "Dia": "={{ $json.dia }}",
+            "Mes": "={{ $json.mes }}",
+            "Anio": "={{ $json.anio }}",
+            "Habito": "={{ $json.habito }}",
+            "Valor": "={{ $json.valor }}",
+            "Unidad": "={{ $json.unidad }}",
+            "Cumple": "={{ $json.cumple }}",
+            "Minimo": "={{ $json.minimo }}",
+            "Texto": "={{ $json.texto }}",
+            "ID": "={{ $json.id }}",
+            "Origen": "={{ $json.origen }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Fecha",
+              "displayName": "Fecha",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Dia",
+              "displayName": "Dia",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Mes",
+              "displayName": "Mes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Anio",
+              "displayName": "Anio",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Habito",
+              "displayName": "Habito",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Valor",
+              "displayName": "Valor",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Unidad",
+              "displayName": "Unidad",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Cumple",
+              "displayName": "Cumple",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Minimo",
+              "displayName": "Minimo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Texto",
+              "displayName": "Texto",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ID",
+              "displayName": "ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Origen",
+              "displayName": "Origen",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        3392,
+        4400
+      ],
+      "id": "864a9d07-9a3f-4945-bf45-aa6ff90a3e41",
+      "name": "Guardar Habito",
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Google Service Account"
+        }
+      },
+      "notes": "Origen = \"reglas\" (regex router) or \"llm\" (local model fallback). Add an \"Origen\" column to the tab."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c-guardar",
+              "leftValue": "={{ $json.guardar }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3168,
+        4448
+      ],
+      "id": "841a4bda-2b93-4c10-b7d7-6d4604a55290",
+      "name": "Guardar Habito?"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// n8n Code node: \"Normalizar Habito\"   ->  Mode: Run Once for All Items\n//\n// Recibe items de DOS origenes:\n//   - \"Ruta\"      (camino de reglas, origen = \"reglas\")\n//   - \"Ruta LLM\"  (camino del modelo, origen = \"llm\")\n//\n// Valida contra Config_Habitos, calcula \"Cumple\" sobre el TOTAL DEL DIA\n// y arma la respuesta. Vive en un solo lugar para los dos caminos.\n//\n// Acumulado del dia (columna opcional \"Agregacion\" en Config_Habitos):\n//   - \"suma\" (default): agua 1L + agua 1L = 2L\n//   - \"max\"  (default para pasos): el Atajo manda el total del dia,\n//            asi que se toma el mayor, no la suma\n// ============================================================\n\nconst TZ = 'America/Argentina/Buenos_Aires';\nconst hoy = DateTime.now().setZone(TZ).startOf('day');\n\nfunction norm(s) {\n  return String(s == null ? '' : s)\n    .toLowerCase()\n    .normalize('NFD')\n    .replace(/[̀-ͯ]/g, '')\n    .trim();\n}\n\nfunction n(v) {\n  return Number(String(v == null ? '' : v).replace(',', '.')) || 0;\n}\n\n// Uso Dia/Mes/Anio y no Fecha: no dependen de como Sheets serialice la fecha.\nfunction clave(r) {\n  const d = Number(r['Dia']), m = Number(r['Mes']), a = Number(r['Anio']);\n  if (!d || !m || !a) return '';\n  return a + '-' + String(m).padStart(2, '0') + '-' + String(d).padStart(2, '0');\n}\n\n// ---------- config y log ----------\nconst cfg = $('Leer Config Habitos').all()\n  .map((i) => i.json)\n  .filter((r) => r && r['Habito'] && norm(r['Activo']) !== 'no');\n\nconst log = $('Leer Log Habitos').all()\n  .map((i) => i.json)\n  .filter((r) => r && r['Habito']);\n\nconst saludo = (() => {\n  try { return $('User Lookup').first().json.user.greeting || 'che'; }\n  catch (e) { return 'che'; }\n})();\n\n// ---------- formato ----------\nfunction fmt(v, u) {\n  const x = Math.round(v * 100) / 100;\n  if (u === 'check') return '';\n  if (u === 'min') return x + ' min';\n  if (u === 'h') return x + ' h';\n  if (u === 'L') return x + ' L';\n  if (u === 'g') return x + ' g';\n  if (u === 'pag') return x + ' pág';\n  if (u === 'km') return x + ' km';\n  if (u === 'pasos') return x.toLocaleString('es-AR') + ' pasos';\n  return x + ' ' + u;\n}\n\n// ---------- procesar ----------\nconst filas = [];\nconst lineas = [];\nlet rechazo = null;\n\nfor (const item of $input.all()) {\n  const j = item.json;\n\n  const h = cfg.find((r) => norm(r['Habito']) === norm(j.habito));\n  if (!h) {\n    // Solo pasa por el camino del modelo: invento un habito.\n    rechazo = 'No tengo ese hábito cargado, ' + saludo +\n      '. Los que tengo son: ' + cfg.map((r) => r['Habito']).join(', ') + '.';\n    continue;\n  }\n\n  const nombre = String(h['Habito']);\n  const unidad = j.unidad || String(h['Unidad'] || 'check');\n  const minimo = j.minimo != null ? Number(j.minimo) : n(h['Minimo']);\n  const valor = unidad === 'check' ? 1 : (Number(j.valor) || minimo);\n  const fecha = j.fecha || hoy.toFormat('yyyy-MM-dd');\n  const cuando = j.fechaLabel || '';\n\n  const agregacion = norm(h['Agregacion']) || (unidad === 'pasos' ? 'max' : 'suma');\n\n  // Registros previos del mismo habito, mismo dia y misma unidad\n  // (Natacion en km y en min no se mezclan)\n  const previos = log.filter((r) =>\n    clave(r) === fecha &&\n    norm(r['Habito']) === norm(nombre) &&\n    String(r['Unidad'] || '').trim() === unidad);\n\n  const valoresPrevios = previos.map((r) => n(r['Valor']));\n  const yaCumplia = previos.some((r) => String(r['Cumple'] || '').trim().toUpperCase() === 'SI');\n\n  let total;\n  if (unidad === 'check') total = 1;\n  else if (agregacion === 'max') total = Math.max(valor, ...valoresPrevios);\n  else total = valor + valoresPrevios.reduce((a, b) => a + b, 0);\n\n  const cumple = yaCumplia || total >= minimo;\n  const detalle = fmt(valor, unidad);\n  // Solo muestra el total si difiere de lo que acaba de mandar\n  const acumulado = unidad !== 'check' && total !== valor;\n\n  let linea;\n  if (unidad === 'check') {\n    linea = '✅ ' + nombre + (yaCumplia ? ' (ya estaba anotado)' : '');\n  } else if (cumple) {\n    linea = '✅ ' + nombre + ' ' + detalle +\n      (acumulado ? ' → ' + fmt(total, unidad) + ' en el día' : '') +\n      (j.asumido ? ' (asumí el mínimo)' : '');\n  } else {\n    linea = '🟡 ' + nombre + ' ' + detalle +\n      (acumulado ? ' → ' + fmt(total, unidad) + ' en el día' : '') +\n      ', te faltan ' + fmt(minimo - total, unidad) + ' para el mínimo';\n  }\n  lineas.push(linea + cuando);\n\n  filas.push({\n    ...j,\n    habito: nombre,\n    valor,\n    unidad,\n    minimo,\n    cumple: cumple ? 'SI' : 'NO',\n    // fecha/dia/mes/anio vienen de \"Detectar Intencion\" en los dos caminos\n    fecha,\n    dia: j.dia || hoy.day,\n    mes: j.mes || hoy.month,\n    anio: j.anio || hoy.year,\n  });\n}\n\nif (!filas.length) {\n  return [{\n    json: {\n      ok: false,\n      guardar: false,\n      reply: rechazo || 'No entendí ese hábito, ' + saludo + '.',\n    },\n  }];\n}\n\nconst reply = lineas.join('\\n') + '\\n\\nListo, ' + saludo + '!';\n\nreturn filas.map((f) => ({ json: { ...f, ok: true, guardar: true, reply } }));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2944,
+        4448
+      ],
+      "id": "d81c8048-dfcb-491c-9db4-70cb5c44076b",
+      "name": "Normalizar Habito"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "Ruta LLM-habito",
+                    "leftValue": "={{ $json.ruta }}",
+                    "rightValue": "habito",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "habito"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "Ruta LLM-gasto",
+                    "leftValue": "={{ $json.ruta }}",
+                    "rightValue": "gasto",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "gasto"
+            }
+          ]
+        },
+        "looseTypeValidation": true,
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "responder"
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        2720,
+        4912
+      ],
+      "id": "2e6ce17f-9bfd-407f-a772-ceaf7ba1ffc6",
+      "name": "Ruta LLM"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// n8n Code node: \"Parse Agente\"   ->  Mode: Run Once for All Items\n//\n// Traduce la salida del modelo local a la forma comun y NO confia en el:\n//   - la categoria tiene que existir en la lista de \"Detectar Intencion\"\n//   - el tipo (Ingreso / Gasto Fijo / ...) se deriva de la categoria\n//   - el monto tiene que ser > 0 y el mensaje tiene que traer un numero\n//     (el 3B inventa montos: \"pague la cuota del gym\" -> 10000)\n//   - las respuestas las arma este nodo, no el modelo: en charla libre\n//     el 3B inventa datos (\"este mes no anotaste nada\")\n//\n// Sale con \"ruta\": \"habito\" | \"gasto\" | \"responder\" (lo lee \"Ruta LLM\").\n// La fecha la hereda de \"Detectar Intencion\".\n// ============================================================\n\nconst ctx = $('Detectar Intencion').first().json;\nconst CATEGORIAS = ctx.categorias || {};\nconst saludo = (ctx.user && ctx.user.greeting) || 'che';\n\nfunction norm(s) {\n  return String(s == null ? '' : s)\n    .toLowerCase()\n    .normalize('NFD')\n    .replace(/[̀-ͯ]/g, '')\n    .trim();\n}\n\nfunction nuevoId() {\n  return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);\n}\n\n// \"50.000\" / \"50000\" / 50000 / \"$ 50.000,50\" -> numero\nfunction monto(v) {\n  if (typeof v === 'number') return v;\n  let s = String(v == null ? '' : v).replace(/[^\\d.,]/g, '');\n  if (/,\\d{1,2}$/.test(s)) s = s.replace(/\\./g, '').replace(',', '.');\n  else s = s.replace(/[.,](?=\\d{3}(\\D|$))/g, '');\n  return Number(s) || 0;\n}\n\nfunction limpiarTexto(s) {\n  // Emojis rotos que a veces devuelve el modelo local\n  return String(s || '')\n    .replace(/�/g, '')\n    .replace(/([\\uD800-\\uDBFF])(?![\\uDC00-\\uDFFF])/g, '')\n    .replace(/(^|[^\\uD800-\\uDBFF])([\\uDC00-\\uDFFF])/g, '$1')\n    .trim();\n}\n\nfunction responder(reply, extra) {\n  return { json: { ...ctx, ruta: 'responder', guardar: false, reply, ...(extra || {}) } };\n}\n\nconst raw = String(($input.first() && $input.first().json.output) || '');\n\n// El modelo a veces envuelve el JSON en markdown o le agrega texto.\nlet jsonStr = raw.trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();\nconst start = jsonStr.indexOf('{');\nconst end = jsonStr.lastIndexOf('}');\nif (start !== -1 && end !== -1) jsonStr = jsonStr.slice(start, end + 1);\n\nlet p;\ntry {\n  p = JSON.parse(jsonStr);\n} catch (e) {\n  // Fallar ruidoso: el usuario se entera de que no se guardo nada.\n  return [responder('No pude interpretar eso, ' + saludo + '. Probá algo como \"supe 50000\" o \"gym 45 min\".', {\n    _error: e.message,\n    _raw: raw.slice(0, 500),\n  })];\n}\n\nconst tipo = norm(p.tipo);\n\n// ---------- habito ----------\nif (tipo === 'habito') {\n  const id = nuevoId();\n  return [{\n    json: {\n      ...ctx,\n      ruta: 'habito',\n      esHabito: true,\n      origen: 'llm',\n      id: id + '-0',\n      idLote: id,\n      habito: String(p.habito || ''),\n      valor: monto(p.valor),\n      unidad: null,   // lo resuelve \"Normalizar Habito\" desde la config\n      minimo: null,\n      asumido: monto(p.valor) === 0,\n    },\n  }];\n}\n\n// ---------- plata ----------\nif (tipo === 'plata') {\n  const valor = monto(p.valor);\n  const categoria = Object.keys(CATEGORIAS).find((c) => norm(c) === norm(p.categoria)) || 'Otro';\n  const tipoPlata = CATEGORIAS[categoria] || 'Otro Gasto';\n  const moneda = norm(p.moneda) === 'usd' ? 'USD' : 'ARS';\n  const detalle = limpiarTexto(p.detalle).slice(0, 80);\n\n  if (!(valor > 0) || !/\\d/.test(ctx.textoLimpio || '')) {\n    return [responder('Entendí que es plata pero no el monto, ' + saludo + '. Mandámelo con el número, ej: \"' + (categoria === 'Otro' ? 'gym' : categoria.toLowerCase()) + ' 30000\".')];\n  }\n\n  const id = nuevoId();\n  const plata = (moneda === 'USD' ? 'US$' : '$') + valor.toLocaleString('es-AR');\n  const reply = 'Anoté:\\n' + (tipoPlata === 'Ingreso' ? '💰 ' : '💸 ') + categoria + ' (' + tipoPlata + ') ' +\n    plata + (detalle ? ' · ' + detalle : '') + (ctx.fechaLabel || '') +\n    '\\n\\nListo, ' + saludo + '! Si no era esa categoría, decime \"borrá\".';\n\n  return [{\n    json: {\n      ...ctx,\n      ruta: 'gasto',\n      esHabito: false,\n      guardar: true,\n      origen: 'llm',\n      id,\n      idLote: id,\n      tipo: tipoPlata,\n      categoria,\n      detalle,\n      moneda,\n      valor,\n      reply,\n    },\n  }];\n}\n\n// ---------- charla ----------\nconst t = norm(ctx.textoLimpio);\nif (/\\b(gracias|genia|genio|grande|buenisimo)\\b/.test(t)) {\n  return [responder('De nada, ' + saludo + '!')];\n}\nif (/^(hola|holi|buen dia|buenas|hey|que tal)\\b/.test(t)) {\n  return [responder('Hola ' + saludo + '! ¿Qué anotamos?')];\n}\nreturn [responder('Eso todavía no lo sé hacer, ' + saludo + '. Puedo anotar gastos, ingresos y hábitos. Mandá /ayuda para ver ejemplos.')];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2496,
+        4928
+      ],
+      "id": "530b3d8d-4442-4b90-aa3e-fd0ee39ecf9e",
+      "name": "Parse Agente"
+    },
+    {
+      "parameters": {
+        "model": "llama3.2:3b",
+        "options": {
+          "temperature": 0,
+          "format": "json"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [
+        2224,
+        5152
+      ],
+      "id": "c2d09b7d-7644-4109-a2be-bdae58d0e4df",
+      "name": "Ollama Chat Model",
+      "credentials": {
+        "ollamaApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Ollama Local"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.textoLimpio }}",
+        "options": {
+          "systemMessage": "=Clasificás mensajes de {{ $json.user.name }} para anotar su plata y sus hábitos.\n\nClasificá el mensaje en UNA de estas tres opciones y respondé SOLO con un objeto JSON, sin texto extra.\n\n1) PLATA: un gasto o un ingreso que trae un monto.\n{\"tipo\":\"plata\",\"categoria\":\"<una de CATEGORIAS>\",\"detalle\":\"<qué fue, 1 a 4 palabras>\",\"moneda\":\"ARS\",\"valor\":<número>}\n\n2) HABITO: algo que hizo para cuidarse (leer, entrenar, tomar agua, dormir...).\n{\"tipo\":\"habito\",\"habito\":\"<uno de HABITOS>\",\"valor\":<número, 0 si no dijo>}\n\n3) CHAT: saludo, pregunta o cualquier otra cosa.\n{\"tipo\":\"chat\"}\n\nCATEGORIAS:\n{{ $json.categoriasTexto }}\n\nHABITOS: {{ $json.habitosTexto }}\n\nREGLAS:\n- valor es un número sin puntos ni símbolos. \"50 lucas\" = 50000. \"15k\" = 15000. \"2 palos\" = 2000000.\n- moneda es \"USD\" si dice usd, u$s o dólares. Si no, \"ARS\".\n- Si es plata y ninguna categoría encaja, usá \"Otro\".\n- Si no hay ningún número de plata, NO es plata.\n- Comida, café, bar o restaurante = \"Comidas afuera\". Taxi, cabify, remis = \"Uber\". Ropa, regalos, farmacia = \"Otro\".\n\nEJEMPLOS:\n\"me gaste 3000 en un cafe\" -> {\"tipo\":\"plata\",\"categoria\":\"Comidas afuera\",\"detalle\":\"café\",\"moneda\":\"ARS\",\"valor\":3000}\n\"cobre 2000 dolares de un cliente\" -> {\"tipo\":\"plata\",\"categoria\":\"Freelance\",\"detalle\":\"\",\"moneda\":\"USD\",\"valor\":2000}\n\"compre una remera 25 lucas\" -> {\"tipo\":\"plata\",\"categoria\":\"Otro\",\"detalle\":\"remera\",\"moneda\":\"ARS\",\"valor\":25000}\n\"hice una hora de pileta\" -> {\"tipo\":\"habito\",\"habito\":\"Natacion\",\"valor\":60}\n\"hola\" -> {\"tipo\":\"chat\"}\n\"cuanto gaste este mes?\" -> {\"tipo\":\"chat\"}\n"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        2144,
+        4928
+      ],
+      "id": "754d4baf-6d86-42c3-80b3-d21f9061e8d7",
+      "name": "Agente Contadora"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "Ruta-deshacer",
+                    "leftValue": "={{ $json.ruta }}",
+                    "rightValue": "deshacer",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "deshacer"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "Ruta-habito",
+                    "leftValue": "={{ $json.ruta }}",
+                    "rightValue": "habito",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "habito"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "Ruta-gasto",
+                    "leftValue": "={{ $json.ruta }}",
+                    "rightValue": "gasto",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "gasto"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "Ruta-responder",
+                    "leftValue": "={{ $json.ruta }}",
+                    "rightValue": "responder",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "responder"
+            }
+          ]
+        },
+        "looseTypeValidation": true,
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "llm"
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1920,
+        4448
+      ],
+      "id": "6d162a1a-2fd9-4d15-8626-37ffca54fe8b",
+      "name": "Ruta"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// n8n Code node: \"Detectar Intencion\"   ->  Mode: Run Once for All Items\n//\n// Entrada:  se ignora (son las filas de \"Leer Log Habitos\", que las usa\n//           \"Normalizar Habito\"). La config sale de \"Leer Config Habitos\".\n// Salida:   1+ items, todos con el mismo campo \"ruta\":\n//             - \"deshacer\"  : borrar el ultimo registro\n//             - \"habito\"    : uno o mas habitos reconocidos por reglas\n//             - \"gasto\"     : uno o mas gastos/ingresos reconocidos por reglas\n//             - \"responder\" : contestar sin guardar (ayuda, negacion, etc.)\n//             - \"llm\"       : no se reconocio nada, va al modelo\n//\n// Las reglas resuelven lo comun (\"supe 50000\", \"gym 45 min\", \"agua 2l\").\n// El modelo local (3B) solo ve lo que las reglas no entendieron.\n// La FECHA se resuelve siempre aca, incluso para la ruta \"llm\".\n// ============================================================\n\nconst TZ = 'America/Argentina/Buenos_Aires';\nconst hoy = DateTime.now().setZone(TZ).startOf('day');\n\nconst base = $('User Lookup').first().json;\nconst saludo = (base.user && base.user.greeting) || 'che';\nconst textoOriginal = String(base.text || '');\n\n// ============================================================\n// CATEGORIAS DE PLATA\n// Unica fuente de verdad: \"Parse Agente\" y el prompt del modelo\n// leen esta misma lista desde la salida de este nodo.\n// ============================================================\nconst CATEGORIAS = {\n  'Salario': 'Ingreso', 'Freelance': 'Ingreso',\n  'Agua': 'Gasto Fijo', 'Luz': 'Gasto Fijo', 'Gym': 'Gasto Fijo', 'Telefono': 'Gasto Fijo',\n  'Impuestos': 'Gasto Fijo', 'Suscripciones': 'Gasto Fijo', 'Expensas': 'Gasto Fijo',\n  'Alquiler': 'Gasto Fijo', 'Wifi': 'Gasto Fijo',\n  'Supermercado': 'Gasto Variable', 'Gasolina': 'Gasto Variable', 'Uber': 'Gasto Variable',\n  'Futbol': 'Gasto Variable', 'Casa': 'Gasto Variable',\n  'Otro': 'Otro Gasto', 'Comidas afuera': 'Otro Gasto', 'Cine': 'Otro Gasto', 'Mercado libre': 'Otro Gasto',\n};\n\n// Alias -> categoria. El nombre de cada categoria ya cuenta como alias.\n// \"Otro\" no tiene alias a proposito: si no se sabe, que decida el modelo.\nconst ALIAS_PLATA = {\n  'sueldo': 'Salario', 'honorarios': 'Freelance', 'cliente': 'Freelance',\n  'gimnasio': 'Gym', 'cuota gym': 'Gym',\n  'tel': 'Telefono', 'celular': 'Telefono',\n  'mono': 'Impuestos', 'monotributo': 'Impuestos', 'afip': 'Impuestos', 'arca': 'Impuestos',\n  'netflix': 'Suscripciones', 'spotify': 'Suscripciones', 'youtube': 'Suscripciones', 'disney': 'Suscripciones',\n  'expensa': 'Expensas',\n  'renta': 'Alquiler', 'alquileres': 'Alquiler',\n  'internet': 'Wifi',\n  'supe': 'Supermercado', 'super': 'Supermercado', 'coto': 'Supermercado',\n  'jumbo': 'Supermercado', 'carrefour': 'Supermercado', 'chino': 'Supermercado',\n  'nafta': 'Gasolina', 'ypf': 'Gasolina', 'shell': 'Gasolina', 'axion': 'Gasolina',\n  'taxi': 'Uber', 'cabify': 'Uber', 'didi': 'Uber', 'remis': 'Uber',\n  'fulbo': 'Futbol', 'cancha': 'Futbol',\n  'resto': 'Comidas afuera', 'comida': 'Comidas afuera', 'almuerzo': 'Comidas afuera',\n  'cena': 'Comidas afuera', 'delivery': 'Comidas afuera', 'rappi': 'Comidas afuera',\n  'pedidosya': 'Comidas afuera', 'pizza': 'Comidas afuera', 'pizzas': 'Comidas afuera',\n  'cafe': 'Comidas afuera', 'sushi': 'Comidas afuera', 'hamburguesa': 'Comidas afuera',\n  'empanadas': 'Comidas afuera',\n  'meli': 'Mercado libre', 'ml': 'Mercado libre', 'mercadolibre': 'Mercado libre',\n};\n\n// Tope por defecto cuando Config_Habitos no trae \"Max\". Evita que\n// \"agua 14200\" (la factura) se anote como 14200 litros tomados.\nconst MAX_DEFAULT = { L: 20, min: 600, h: 24, pasos: 150000, km: 300, pag: 2000, g: 1000 };\n\n// ---------- helpers ----------\nfunction norm(s) {\n  return String(s == null ? '' : s)\n    .toLowerCase()\n    .normalize('NFD')\n    .replace(/[̀-ͯ]/g, '')\n    .replace(/[‘’`]/g, \"'\")\n    .replace(/\\s+/g, ' ')\n    .trim();\n}\n\nfunction num(s) {\n  return parseFloat(String(s).replace(',', '.'));\n}\n\nfunction esc(s) {\n  return String(s).replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');\n}\n\nfunction nuevoId() {\n  return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);\n}\n\nfunction palabra(alias) {\n  // \"\\b\" no sirve para alias que terminan en simbolo (\"disney+\")\n  return new RegExp('(?:^|[^a-z0-9])' + esc(alias) + '(?![a-z0-9])');\n}\n\nfunction responder(reply) {\n  return [{ json: { ...base, ruta: 'responder', guardar: false, reply } }];\n}\n\nconst t0 = norm(textoOriginal);\n\n// ============================================================\n// 0. mensajes sin texto y ayuda\n// ============================================================\nif (!t0) {\n  return responder('Por ahora solo entiendo texto, ' + saludo + '.');\n}\n\nif (/^\\/?(start|help|ayuda)\\b/.test(t0)) {\n  return responder([\n    'Hola ' + saludo + '! Mandame cosas como:',\n    '• supe 50000',\n    '• nafta 30 lucas ayer',\n    '• salario 1500 usd',\n    '• gym 45 min y agua 2l',\n    '• leí 20 pág el martes',\n    '• borrá lo último',\n  ].join('\\n'));\n}\n\n// ============================================================\n// 1. DESHACER\n// Se evalua primero: si el usuario esta corrigiendo, el texto no\n// tiene que interpretarse como un registro nuevo.\n// ============================================================\n\n// \"no fui al gym\" es una negacion de habito, no un deshacer.\nconst ES_NEGACION_HABITO =\n  /\\bno\\s+(?:fui|hice|lei|nade|medite|entrene|tome|dormi|camine|corri)\\b/.test(t0);\n\n// Correcciones al inicio del mensaje: valen aunque haya numeros\n// (\"no, era 5000\" -> borra y pide que lo mande de nuevo).\nconst DESHACER_INICIO = /^(no|nop|uy|ups|ay)[,.\\s]+(era|fue|es|estaba)\\b/;\n\n// Pedidos explicitos: solo si el mensaje NO trae numeros, para que\n// \"cena 20000, estaba mal la comida\" no borre nada.\nconst PATRONES_DESHACER = [\n  /\\b(borra|borralo|borrala|borrar|borre|elimina|eliminalo|eliminar)\\b/,\n  /\\b(deshace|deshacelo|deshacer|cancela|cancelalo|cancelar)\\b/,\n  /\\b(me equivoque|equivocado|equivocada)\\b/,\n  /\\b(esta mal|estaba mal|es un error|fue un error)\\b/,\n  /^(ese|eso|esa|ese registro)\\s+(no|esta mal|estaba mal)\\b/,\n];\n\nconst quiereDeshacer = !ES_NEGACION_HABITO && (\n  DESHACER_INICIO.test(t0) ||\n  (!/\\d/.test(t0) && PATRONES_DESHACER.some((re) => re.test(t0)))\n);\n\nif (quiereDeshacer) {\n  return [{ json: { ...base, ruta: 'deshacer', texto: textoOriginal } }];\n}\n\n// ============================================================\n// 2. config de habitos\n// ============================================================\nconst cfg = $('Leer Config Habitos').all()\n  .map((i) => i.json)\n  .filter((r) => r && r['Habito'] && norm(r['Activo']) !== 'no')\n  .map((r) => {\n    const unidad = String(r['Unidad'] || 'check').trim();\n    const maxCfg = Number(String(r['Max'] == null ? '' : r['Max']).replace(',', '.'));\n    return {\n      habito: String(r['Habito']).trim(),\n      alias: [norm(r['Habito'])]\n        .concat(String(r['Alias'] || '').split(',').map(norm))\n        .filter(Boolean),\n      unidad,\n      minimo: Number(String(r['Minimo']).replace(',', '.')) || 0,\n      unidadAlt: String(r['UnidadAlt'] || '').trim(),\n      minimoAlt: Number(String(r['MinimoAlt']).replace(',', '.')) || 0,\n      max: maxCfg > 0 ? maxCfg : (MAX_DEFAULT[unidad] || Infinity),\n    };\n  });\n\n// alias mas largo primero: \"deep work\" gana sobre \"dw\"\ncfg.forEach((h) => h.alias.sort((a, b) => b.length - a.length));\n\n// ============================================================\n// 3. resolver fecha (se ejecuta SIEMPRE)\n// ============================================================\nconst DIAS = { domingo: 7, lunes: 1, martes: 2, miercoles: 3, jueves: 4, viernes: 5, sabado: 6 };\n\nfunction resolverFecha(t) {\n  let f = hoy;\n  let limpio = t;\n\n  if (/\\banteayer\\b/.test(t)) {\n    f = hoy.minus({ days: 2 });\n    limpio = t.replace(/\\banteayer\\b/g, ' ');\n  } else if (/\\bayer\\b/.test(t)) {\n    f = hoy.minus({ days: 1 });\n    limpio = t.replace(/\\bayer\\b/g, ' ');\n  } else if (/\\bhoy\\b/.test(t)) {\n    limpio = t.replace(/\\bhoy\\b/g, ' ');\n  } else {\n    const md = t.match(/\\b(\\d{1,2})\\/(\\d{1,2})(?:\\/(\\d{2,4}))?\\b/);\n    const wd = Object.keys(DIAS).find((d) => new RegExp('\\\\b' + d + '\\\\b').test(t));\n    if (md && Number(md[2]) >= 1 && Number(md[2]) <= 12) {\n      let anio = hoy.year;\n      if (md[3]) anio = md[3].length === 2 ? 2000 + Number(md[3]) : Number(md[3]);\n      f = DateTime.fromObject({ year: anio, month: Number(md[2]), day: Number(md[1]) }, { zone: TZ });\n      if (!md[3] && f > hoy) f = f.minus({ years: 1 });\n      limpio = t.replace(md[0], ' ');\n    } else if (wd) {\n      const target = DIAS[wd];\n      for (let i = 1; i <= 7; i++) {\n        const c = hoy.minus({ days: i });\n        if (c.weekday === target) { f = c; break; }\n      }\n      limpio = t.replace(new RegExp('\\\\b(?:el |los )?' + wd + '\\\\b'), ' ');\n    }\n  }\n  if (!f || !f.isValid || f > hoy) f = hoy;\n  return { fecha: f, texto: limpio.replace(/\\s+/g, ' ').trim() };\n}\n\nconst { fecha, texto } = resolverFecha(t0);\nconst esHoy = fecha.hasSame(hoy, 'day');\n\n// Se adjunta a TODAS las salidas, incluida la que va al modelo.\nconst fechaCtx = {\n  fecha: fecha.toFormat('yyyy-MM-dd'),\n  dia: fecha.day,\n  mes: fecha.month,\n  anio: fecha.year,\n  esHoy,\n  fechaLabel: esHoy ? '' : ' (' + fecha.toFormat('dd/MM') + ')',\n};\n\n// ============================================================\n// 4. fragmentos\n// \"12,5\" -> \"12.5\" antes de cortar por comas.\n// \"+\" solo separa si esta suelto (\"gym + agua\"), no en \"disney+\".\n// ============================================================\nconst protegido = texto.replace(/(\\d),(\\d)/g, '$1.$2');\nconst fragmentos = protegido\n  .split(/\\s*(?:,|;|\\s\\+|\\by\\b|\\btambien\\b)\\s*/)\n  .map((f) => f.trim())\n  .filter(Boolean);\n\n// ============================================================\n// 5. HABITOS\n// ============================================================\nconst NUM_PALABRAS = {\n  'medio': '0.5', 'media': '0.5', 'un': '1', 'una': '1', 'uno': '1', 'dos': '2',\n  'tres': '3', 'cuatro': '4', 'cinco': '5', 'seis': '6', 'siete': '7', 'ocho': '8',\n  'nueve': '9', 'diez': '10',\n};\n\nfunction numerosEnPalabras(t) {\n  return t.replace(/\\b(medio|media|un|una|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\\b/g,\n    (m) => NUM_PALABRAS[m]);\n}\n\nconst UNI_RE = {\n  min: \"(?:min|mins|minuto|minutos|m|')\",\n  h: '(?:hs|hrs|hr|horas|hora|h)',\n  L: '(?:litros|litro|lts|lt|l)',\n  g: '(?:gramos|gramo|grs|gr|g)',\n  pag: '(?:paginas|pagina|pags|pag|pg)',\n  km: '(?:kilometros|kilometro|kms|km)',\n  pasos: '(?:pasos|paso|steps)',\n};\n\nfunction buscar(t, unidad) {\n  const pat = UNI_RE[unidad];\n  if (!pat) return null;\n  const m = t.match(new RegExp('(\\\\d+(?:\\\\.\\\\d+)?)\\\\s*' + pat + '(?![a-z])'));\n  return m ? num(m[1]) : null;\n}\n\nfunction extraerValor(frag, h) {\n  if (h.unidad === 'check') return { valor: 1, unidad: 'check', asumido: false, alt: false };\n\n  // \"me dormi a las 2\" es una hora del reloj, no una duracion\n  let f = numerosEnPalabras(frag).replace(/\\ba (?:la|las)\\s+\\d{1,2}(?:[:.]\\d{2})?\\b/g, ' ');\n  // \"8.500 pasos\" -> \"8500 pasos\" (punto de miles)\n  if (h.unidad === 'pasos') f = f.replace(/\\b(\\d{1,3}(?:\\.\\d{3})+)\\b/g, (m) => m.replace(/\\./g, ''));\n\n  if (h.unidadAlt) {\n    const v = buscar(f, h.unidadAlt);\n    if (v !== null) return { valor: v, unidad: h.unidadAlt, asumido: false, alt: true };\n  }\n\n  // horas + minutos combinados: \"1h30\", \"1 hora 30\", \"1.5h\"\n  if (h.unidad === 'min' || h.unidad === 'h') {\n    const hm = f.match(/(\\d+(?:\\.\\d+)?)\\s*(?:hs|hrs|hr|horas|hora|h)(?![a-z])\\s*(?:(\\d{1,2})\\s*(?:min|mins|minutos|m|')?)?/);\n    if (hm) {\n      const total = num(hm[1]) * 60 + (hm[2] ? parseInt(hm[2], 10) : 0);\n      if (h.unidad === 'min') return { valor: Math.round(total), unidad: 'min', asumido: false, alt: false };\n      return { valor: Math.round((total / 60) * 100) / 100, unidad: 'h', asumido: false, alt: false };\n    }\n  }\n\n  const v = buscar(f, h.unidad);\n  if (v !== null) return { valor: v, unidad: h.unidad, asumido: false, alt: false };\n\n  if (h.unidad === 'pasos') {\n    const k = f.match(/(\\d+(?:\\.\\d+)?)\\s*(?:k|mil)(?![a-z])/);\n    if (k) return { valor: num(k[1]) * 1000, unidad: 'pasos', asumido: false, alt: false };\n  }\n\n  const n = f.match(/(\\d+(?:\\.\\d+)?)/);\n  if (n) return { valor: num(n[1]), unidad: h.unidad, asumido: false, alt: false };\n\n  return { valor: h.minimo, unidad: h.unidad, asumido: true, alt: false };\n}\n\n// \"pague la cuota del gym\" es plata aunque mencione un habito\nconst VERBOS_PLATA = /\\b(pague|pago|pagar|cuota|factura|abone|gaste|compre|cobre|cobro)\\b/;\n\nfunction matchHabito(frag, usados) {\n  if (VERBOS_PLATA.test(frag)) return null;\n  for (const h of cfg) {\n    if (usados.has(h.habito)) continue;\n    // hasta 3 letras de sufijo para plurales y variantes cortas (\"gyms\", \"aguas\")\n    const hit = h.alias.find((a) => new RegExp('\\\\b' + esc(a) + '\\\\w{0,3}\\\\b').test(frag));\n    if (!hit) continue;\n    const v = extraerValor(frag, h);\n    if (v.valor === null || isNaN(v.valor)) continue;\n    // anti-colision con gastos: \"gym 30000\" = cuota, \"agua 12000\" = factura\n    if (!v.alt && v.valor > h.max) continue;\n    return {\n      habito: h.habito,\n      valor: v.valor,\n      unidad: v.unidad,\n      minimo: v.alt ? h.minimoAlt : h.minimo,\n      asumido: v.asumido,\n    };\n  }\n  return null;\n}\n\n// ============================================================\n// 6. GASTOS por reglas\n// ============================================================\nconst aliasPlata = Object.keys(CATEGORIAS).map((c) => [norm(c), c])\n  .concat(Object.entries(ALIAS_PLATA).map(([a, c]) => [norm(a), c]))\n  .filter(([, c]) => c !== 'Otro')\n  .sort((a, b) => b[0].length - a[0].length);\n\nconst MULT = { k: 1e3, mil: 1e3, luca: 1e3, lucas: 1e3, palo: 1e6, palos: 1e6, millon: 1e6, millones: 1e6, m: 1e6 };\n\n// \"50000\", \"50.000\", \"12.500.50\", \"15k\", \"50 lucas\", \"2 palos\", \"1.5 millones\"\nfunction parseMontos(t) {\n  const re = /(\\d+(?:\\.\\d+)*)\\s*(k|mil|lucas|luca|palos|palo|millones|millon|m)?(?![a-z0-9])/g;\n  const out = [];\n  let m;\n  while ((m = re.exec(t)) !== null) {\n    const raw = m[1];\n    const grupos = raw.split('.');\n    let n;\n    if (grupos.length > 1 && grupos.slice(1).every((g) => g.length === 3)) {\n      n = Number(grupos.join(''));                       // 50.000 -> 50000\n    } else if (grupos.length > 2) {\n      n = Number(grupos.slice(0, -1).join('') + '.' + grupos[grupos.length - 1]); // 12.500.50\n    } else {\n      n = Number(raw);\n    }\n    if (m[2]) n *= MULT[m[2]];\n    if (!isNaN(n)) out.push({ valor: Math.round(n * 100) / 100, token: m[0] });\n  }\n  return out;\n}\n\nconst RELLENO = /\\b(me|te|le|en|el|la|los|las|de|del|al|un|una|por|para|con|que|pague|gaste|compre|cobre|pagaron|gasto|pago|cobro|ars|pesos|peso|usd|dolares|dolar|verdes?)\\b/g;\n\nfunction matchGasto(frag) {\n  const hit = aliasPlata.find(([a]) => palabra(a).test(frag));\n  const montos = parseMontos(frag);\n  if (!hit && !montos.length) return { tipo: 'vacio' };\n  if (!hit || !montos.length) return { tipo: 'ambiguo' };\n\n  // El monto es el numero mas grande: \"2 pizzas 16000\" -> 16000\n  const monto = montos.reduce((a, b) => (b.valor > a.valor ? b : a));\n  if (monto.valor <= 0) return { tipo: 'ambiguo' };\n\n  const moneda = /(\\busd\\b|u\\$s|us\\$|\\bdolar|\\bdolares\\b|\\bverdes?\\b)/.test(frag) ? 'USD' : 'ARS';\n  const detalle = frag\n    .replace(palabra(hit[0]), ' ')\n    .replace(monto.token, ' ')\n    .replace(/u\\$s|us\\$|\\$/g, ' ')\n    .replace(RELLENO, ' ')\n    .replace(/[^a-z0-9ñ ]/g, ' ')\n    .replace(/\\s+/g, ' ')\n    .trim();\n\n  return {\n    tipo: 'gasto',\n    categoria: hit[1],\n    tipoPlata: CATEGORIAS[hit[1]],\n    valor: monto.valor,\n    moneda,\n    detalle: detalle.length > 2 ? detalle : '',\n  };\n}\n\n// ============================================================\n// 7. clasificar cada fragmento\n// ============================================================\nconst habitos = [];\nconst gastos = [];\nlet ambiguo = false;\nconst usados = new Set();\n\nfor (const frag of fragmentos) {\n  const h = matchHabito(frag, usados);\n  if (h) {\n    habitos.push(h);\n    usados.add(h.habito);\n    continue;\n  }\n  const g = matchGasto(frag);\n  if (g.tipo === 'gasto') {\n    gastos.push(g);\n  } else if (gastos.length && !parseMontos(frag).length) {\n    // fragmento sin monto despues de un gasto: es detalle del anterior\n    // (\"cena 20000, con los chicos\")\n    const ult = gastos[gastos.length - 1];\n    ult.detalle = (ult.detalle + ' ' + frag).trim();\n  } else if (g.tipo === 'ambiguo') {\n    ambiguo = true;\n  }\n}\n\nconst negado = /^(?:no |hoy no |ayer no )/.test(t0) || ES_NEGACION_HABITO;\n\n// Contexto que necesitan el modelo y \"Parse Agente\"\nconst llmCtx = {\n  categorias: CATEGORIAS,\n  categoriasTexto: Object.entries(\n    Object.entries(CATEGORIAS).reduce((acc, [c, t]) => {\n      (acc[t] = acc[t] || []).push(c);\n      return acc;\n    }, {}),\n  ).map(([t, cs]) => '- ' + t + ': ' + cs.join(', ')).join('\\n'),\n  habitosTexto: cfg.map((h) => h.habito).join(', '),\n};\n\n// ============================================================\n// 8. salida\n// ============================================================\nif (negado && habitos.length) {\n  return responder('Ok, no anoto ' + habitos.map((h) => h.habito).join(', ') + '. Mañana se recupera, ' + saludo + '!');\n}\n\nif (habitos.length && gastos.length) {\n  return responder('Mandame los hábitos y la plata en mensajes separados, ' + saludo + '. Así si hay que borrar, borro lo correcto.');\n}\n\nconst idLote = nuevoId();\n\nif (habitos.length && !negado) {\n  return habitos.map((e, i) => ({\n    json: {\n      ...base,\n      ...fechaCtx,\n      ruta: 'habito',\n      esHabito: true,\n      origen: 'reglas',\n      id: idLote + '-' + i,\n      idLote,\n      habito: e.habito,\n      valor: e.valor,\n      unidad: e.unidad,\n      minimo: e.minimo,\n      asumido: e.asumido,\n      texto: textoOriginal,\n    },\n  }));\n}\n\nif (gastos.length && !ambiguo && !negado) {\n  const fmtPlata = (v, mon) => (mon === 'USD' ? 'US$' : '$') + Number(v).toLocaleString('es-AR');\n  const lineas = gastos.map((g) =>\n    (g.tipoPlata === 'Ingreso' ? '💰 ' : '💸 ') + g.categoria + ' (' + g.tipoPlata + ') ' +\n    fmtPlata(g.valor, g.moneda) + (g.detalle ? ' · ' + g.detalle : '') + fechaCtx.fechaLabel);\n  const reply = 'Anoté:\\n' + lineas.join('\\n') + '\\n\\nListo, ' + saludo + '!';\n\n  return gastos.map((g, i) => ({\n    json: {\n      ...base,\n      ...fechaCtx,\n      ruta: 'gasto',\n      esHabito: false,\n      guardar: true,\n      origen: 'reglas',\n      id: gastos.length === 1 ? idLote : idLote + '-' + i,\n      idLote,\n      tipo: g.tipoPlata,\n      categoria: g.categoria,\n      detalle: g.detalle,\n      moneda: g.moneda,\n      valor: g.valor,\n      texto: textoOriginal,\n      reply,\n    },\n  }));\n}\n\n// Al modelo. Recibe la fecha ya resuelta y el texto sin palabras de fecha.\nreturn [{\n  json: {\n    ...base,\n    ...fechaCtx,\n    ...llmCtx,\n    ruta: 'llm',\n    esHabito: false,\n    textoLimpio: texto || t0,\n    texto: textoOriginal,\n  },\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1696,
+        4496
+      ],
+      "id": "f692b6e8-666d-4778-813b-129c6d1f13a3",
+      "name": "Detectar Intencion"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Habitos_Log",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1472,
+        4496
+      ],
+      "id": "cbb17364-3cfe-4f32-ac10-eb6494e5ef91",
+      "name": "Leer Log Habitos",
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Google Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Config_Habitos",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1248,
+        4496
+      ],
+      "id": "8e03b163-8f02-4155-b1e7-9e6217ddbe39",
+      "name": "Leer Config Habitos",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Google Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "r1",
+                    "leftValue": "={{ $json.isKnownUser }}",
+                    "rightValue": true,
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true",
+                      "singleValue": true
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "conocido"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "desconocido"
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1024,
+        4752
+      ],
+      "id": "7cd57c85-8c41-49af-bab9-6993f2db21ad",
+      "name": "Switch Conocido?"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// n8n Code node: \"User Lookup\"   ->  Mode: Run Once for All Items\n//\n// Lee tu chat_id, nombre y saludo del nodo \"Settings\" (un solo lugar para configurar).\n// n8n 2.x bloquea $env en los nodos Code, por eso la config vive en un nodo.\n// ============================================================\n\nconst cfg = $('Settings').first().json;\nconst CHAT_ID = String(cfg.cfg_chat_id || '');\nconst USUARIO = { name: cfg.cfg_name, greeting: cfg.cfg_greeting };\n\nif (!/^-?\\d+$/.test(CHAT_ID)) {\n  throw new Error('Pone tu chat ID de Telegram en el nodo \"Settings\"');\n}\n\nconst j = $input.first().json;\nconst canal = j.canal || 'telegram';\nconst from = String(j.from == null ? '' : j.from).trim();\n\n// iPhone ya viene autenticado por el Header Auth del Webhook.\n// Telegram: igualdad exacta, nunca includes() (un id que contenga\n// el tuyo como substring pasaria el filtro).\nconst conocido = canal === 'iphone' || from === CHAT_ID;\n\nreturn [{\n  json: {\n    canal,\n    from,\n    text: String(j.text || ''),\n    chat_id: canal === 'iphone' ? CHAT_ID : String(j.chat_id || ''),\n    user: conocido ? USUARIO : null,\n    isKnownUser: conocido,\n  },\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        4752
+      ],
+      "id": "5ed4b179-2b08-487b-8a6f-2f96206948a2",
+      "name": "User Lookup"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a0",
+              "name": "canal",
+              "value": "telegram",
+              "type": "string"
+            },
+            {
+              "id": "a1",
+              "name": "from",
+              "value": "={{ String($json.message.from.id) }}",
+              "type": "string"
+            },
+            {
+              "id": "a2",
+              "name": "text",
+              "value": "={{ $json.message.text || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "a3",
+              "name": "chat_id",
+              "value": "={{ String($json.message.chat.id) }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        128,
+        4848
+      ],
+      "id": "146b9bce-6ee4-43ab-bf86-edc9c57d966b",
+      "name": "Extraer Datos"
+    },
+    {
+      "parameters": {
+        "jsCode": "// El Atajo de iOS manda { \"text\": \"8500 pasos\" } con el header X-Webhook-Token.\n// El token ya lo valida el Webhook (Header Auth), asi que aca solo\n// normalizamos a la misma forma que sale de \"Extraer Datos\".\n// El chat_id lo completa \"User Lookup\".\nconst j = $input.first().json;\nconst body = j.body || j;\nreturn [{\n  json: {\n    canal: 'iphone',\n    from: '',\n    chat_id: '',\n    text: String(body.text || ''),\n  },\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        128,
+        4656
+      ],
+      "id": "ba2dc893-af69-4d84-b3a8-a9036f0897d8",
+      "name": "Desde iPhone"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "expense-habit-ios",
+        "authentication": "headerAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -96,
+        4656
+      ],
+      "id": "f4fa887a-030f-4c70-b007-25f914225b14",
+      "name": "Webhook",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "iOS Shortcut Header Auth"
+        }
+      },
+      "notes": "Header Auth: crear credencial con Name = X-Webhook-Token y el valor que manda el Atajo de iOS."
+    },
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {
+          "download": false
+        }
+      },
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -96,
+        4848
+      ],
+      "id": "0f4ccd41-0fad-4eea-bb4e-2cfca39cad8c",
+      "name": "Telegram Trigger",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "cfg0",
+              "name": "cfg_chat_id",
+              "value": "YOUR_TELEGRAM_CHAT_ID",
+              "type": "string"
+            },
+            {
+              "id": "cfg1",
+              "name": "cfg_name",
+              "value": "Your Name",
+              "type": "string"
+            },
+            {
+              "id": "cfg2",
+              "name": "cfg_greeting",
+              "value": "che",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "bcb6dd18-5b52-419e-b5c9-a086c5614edd",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        352,
+        5056
+      ],
+      "notes": "Edit these three values before activating: your Telegram chat ID, your name, and the greeting the bot uses.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c-recap",
+              "leftValue": "={{ !$json.canal }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "629a6e40-9841-430a-b497-466f05fb8c78",
+      "name": "Daily recap?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        576,
+        5056
+      ],
+      "notes": "The 19:00 trigger carries no \"canal\" field: those items go to the recap, everything else to the message flow.",
+      "notesInFlow": false
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Armar Recordatorio": {
+      "main": [
+        [
+          {
+            "node": "Enviar Recordatorio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer Log": {
+      "main": [
+        [
+          {
+            "node": "Armar Recordatorio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer Config": {
+      "main": [
+        [
+          {
+            "node": "Leer Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Todos los dias 19:00": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Invalidar Puntero": {
+      "main": [
+        [
+          {
+            "node": "Responder Deshacer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Borrar Fila": {
+      "main": [
+        [
+          {
+            "node": "Invalidar Puntero",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Encontrado?": {
+      "main": [
+        [
+          {
+            "node": "Borrar Fila",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder Sin Guardar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar Filas a Borrar": {
+      "main": [
+        [
+          {
+            "node": "Encontrado?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer Hoja Objetivo": {
+      "main": [
+        [
+          {
+            "node": "Buscar Filas a Borrar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hay Puntero?": {
+      "main": [
+        [
+          {
+            "node": "Leer Hoja Objetivo",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder Sin Guardar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolver Puntero": {
+      "main": [
+        [
+          {
+            "node": "Hay Puntero?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer Ultimo Registro": {
+      "main": [
+        [
+          {
+            "node": "Resolver Puntero",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar Puntero": {
+      "main": [
+        [
+          {
+            "node": "Responder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar Puntero": {
+      "main": [
+        [
+          {
+            "node": "Guardar Puntero",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar Gasto": {
+      "main": [
+        [
+          {
+            "node": "Armar Puntero",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar Habito": {
+      "main": [
+        [
+          {
+            "node": "Armar Puntero",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar Habito?": {
+      "main": [
+        [
+          {
+            "node": "Guardar Habito",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder Sin Guardar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar Habito": {
+      "main": [
+        [
+          {
+            "node": "Guardar Habito?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ruta LLM": {
+      "main": [
+        [
+          {
+            "node": "Normalizar Habito",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Guardar Gasto",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder Sin Guardar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Agente": {
+      "main": [
+        [
+          {
+            "node": "Ruta LLM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Agente Contadora",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agente Contadora": {
+      "main": [
+        [
+          {
+            "node": "Parse Agente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ruta": {
+      "main": [
+        [
+          {
+            "node": "Leer Ultimo Registro",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Normalizar Habito",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Guardar Gasto",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder Sin Guardar",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Agente Contadora",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detectar Intencion": {
+      "main": [
+        [
+          {
+            "node": "Ruta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer Log Habitos": {
+      "main": [
+        [
+          {
+            "node": "Detectar Intencion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer Config Habitos": {
+      "main": [
+        [
+          {
+            "node": "Leer Log Habitos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch Conocido?": {
+      "main": [
+        [
+          {
+            "node": "Leer Config Habitos",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "User Lookup": {
+      "main": [
+        [
+          {
+            "node": "Switch Conocido?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer Datos": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Desde iPhone": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Desde iPhone",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Extraer Datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Daily recap?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Daily recap?": {
+      "main": [
+        [
+          {
+            "node": "Leer Config",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "User Lookup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false,
+    "timeSavedPerExecution": 3,
+    "timezone": "America/Argentina/Buenos_Aires"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

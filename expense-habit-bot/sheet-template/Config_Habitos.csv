@@ -1,0 +1,7 @@
+Habito,Unidad,Minimo,Alias,Activo,MetaSemanal,Agregacion,Max,UnidadAlt,MinimoAlt
+Agua,L,2,"agua,litros",SI,7,suma,8,,
+Pasos,pasos,8000,"caminata,steps",SI,7,max,60000,,
+Gym,min,45,"gimnasio,pesas",SI,4,suma,240,,
+Natacion,min,30,"pileta,nadar",SI,2,suma,240,km,1
+Lectura,pag,10,"leer,lectura,libro",SI,7,suma,300,,
+Meditacion,check,1,"meditar,medite",SI,5,suma,,,

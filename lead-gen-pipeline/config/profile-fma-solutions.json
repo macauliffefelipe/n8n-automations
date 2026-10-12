@@ -1,0 +1,227 @@
+{
+  "profile": "fma-solutions",
+  "shared": {
+    "timezone": "America/Argentina/Buenos_Aires",
+    "language": "es",
+    "sender": {
+      "name": "Felipe Mac Auliffe",
+      "title": "Founder",
+      "company": "FMA Solutions",
+      "signature": "Felipe Mac Auliffe\nFounder @ FMA Solutions",
+      "email": "you@example.com",
+      "review_email": "you@example.com"
+    },
+    "models": {
+      "email": "qwen2.5:14b",
+      "linkedin": "qwen3:4b",
+      "score": "qwen2.5:14b",
+      "classify": "llama3.2:3b",
+      "followup": "qwen3:4b"
+    }
+  },
+  "discovery": {
+    "sources": {
+      "adzuna": {
+        "enabled": false,
+        "country": "us",
+        "max_days_old": 40,
+        "keep_regex": "(head of sales|\\bvp\\b.{0,30}sales|vice president.{0,30}sales|director of sales|sales director|sales manager|account executive|sales development|\\bsdr\\b|\\bbdr\\b|business development (manager|executive|representative|director)|chief revenue|revenue officer|founding[^a-z]{0,25}sales)",
+        "queries": []
+      },
+      "apollo": {
+        "enabled": false,
+        "rotate_pages": 4,
+        "locations": [],
+        "sales_titles": [],
+        "queries": []
+      },
+      "news": {
+        "enabled": false,
+        "location_label": "",
+        "based_prefixes": [],
+        "queries": []
+      }
+    },
+    "blocklists": {
+      "whole_word": [],
+      "substring": [
+        "recruit",
+        "staffing"
+      ],
+      "big_corp": [
+        "salesforce",
+        "microsoft",
+        "oracle",
+        "google",
+        "amazon",
+        "meta",
+        "workday",
+        "servicenow",
+        "adobe",
+        "sap",
+        "ibm",
+        "staples",
+        "uber",
+        "honeywell",
+        "medtronic",
+        "merck",
+        "labcorp",
+        "pwc",
+        "metlife",
+        "equifax",
+        "marriott",
+        "deloitte",
+        "accenture",
+        "kpmg",
+        "cvs",
+        "cognizant",
+        "stripe",
+        "aetna",
+        "wipro",
+        "infosys",
+        "tcs",
+        "capgemini",
+        "ey",
+        "pepsico",
+        "nestle",
+        "kroger",
+        "walgreens"
+      ]
+    },
+    "icp": {
+      "prompt": "Not used in this profile: leads are fed by hand or by the intake webhook, already researched.",
+      "signal_weights": {
+        "hiring_sales_role": 3,
+        "hiring_sales_manager": 3,
+        "recent_funding": 3,
+        "founder_closing": 3,
+        "stale_vacancy": 2,
+        "repeat_sales_hiring": 2,
+        "expansion": 2,
+        "referral_dependent": 2,
+        "no_sales_function": 2,
+        "new_sales_leader": 1,
+        "acquisition": 1,
+        "crm_spreadsheets": 1
+      },
+      "home_region_regex": "",
+      "revenue_ideal": [
+        500000,
+        5000000
+      ],
+      "employees_ok": [
+        3,
+        30
+      ],
+      "founder_led_max_employees": 15
+    },
+    "limits": {
+      "llm_cap": 25,
+      "resolve_cap": 10,
+      "min_score": 0,
+      "max_employees": 100
+    }
+  },
+  "outreach": {
+    "contact": {
+      "provider": "hunter",
+      "min_conf_dm": 60,
+      "min_conf_senior": 80,
+      "generic_prefixes": [
+        "info",
+        "support",
+        "sales",
+        "contact",
+        "hello",
+        "admin",
+        "careers",
+        "hr",
+        "help",
+        "office",
+        "team",
+        "jobs",
+        "recruiting",
+        "noreply",
+        "no-reply",
+        "press",
+        "media",
+        "billing",
+        "accounts",
+        "informacion",
+        "ventas",
+        "contacto",
+        "hola",
+        "administracion",
+        "soporte"
+      ],
+      "titles": [
+        "founder",
+        "co founder",
+        "cofounder",
+        "ceo",
+        "coo",
+        "owner",
+        "managing director",
+        "director of operations",
+        "operations director",
+        "head of operations",
+        "vp operations",
+        "vice president operations",
+        "general manager",
+        "director general",
+        "gerente general",
+        "director de operaciones"
+      ]
+    },
+    "offer": {
+      "email_prompt": "Sos {sender_name}, founder de {sender_company}, una consultora que ayuda a agencias y consultoras B2B en LatAm y EEUU a automatizar el trabajo operativo repetible (reportes de cliente, seguimiento de leads, onboarding) con IA y n8n. Redacta un email de outreach corto, dirigido a {name} ({title}) de {company}. Contexto que vos mismo investigaste sobre esta empresa, usalo como gancho concreto del primer parrafo: {why}. Detalles adicionales si los hay: {details}. Si ese contexto es especifico (un rol que buscan cubrir, algo que vos notaste, una señal concreta), citalo tal cual sin inventar datos que no esten ahi. Si el contexto es debil o generico, no fuerces un gancho falso: se breve y directo en vez de inventar. Esta prohibido usar frases genericas de relleno como 'crecimiento reciente', 'equipo en expansion', 'cultura de trabajo remoto', sin un dato concreto detras. Es obligatorio mencionar en algun punto del cuerpo del mail, de forma natural y no como el gancho principal, que agencias de tamaño similar suelen recuperar entre 10 y 20 horas por mes una vez que automatizan ese tipo de trabajo. El cierre del mail tiene que ser una pregunta concreta y de bajo compromiso (proponer una llamada corta de 15 minutos esta semana), nunca un cierre vago tipo 'contame como te puedo ayudar'. Tono profesional, cercano, cero venta agresiva. Maximo 120 palabras, sin asunto tipo clickbait. Firma como:\n{signature}\nIMPORTANTE: el email completo, subject y body, tiene que estar TOTALMENTE EN ESPAÑOL. Responde SOLO con un objeto JSON valido con dos campos: subject (asunto corto y directo, sin emojis, en español) y body (el cuerpo del mail en texto plano en español, con saltos de linea como \\n). No incluyas ningun otro texto, ni markdown, ni bloques de codigo.",
+      "linkedin_prompt": "Sos {sender_name}, founder de {sender_company}, ayudas a agencias y consultoras B2B en LatAm y EEUU a automatizar reportes, seguimiento de leads y onboarding con IA y n8n. Escribi un mensaje corto de LinkedIn (menos de 300 caracteres) para {name_or_role} de {company}, pensado como primer contacto o nota de conexion. Contexto que investigaste sobre esta empresa: {why}. Estructura: gancho breve por la señal concreta de arriba si existe (si el contexto es debil, un gancho generico corto sobre el tipo de empresa, sin inventar datos), una linea sobre que hacer (automatizar reportes/seguimiento de leads/onboarding con IA y n8n), y UNA sola pregunta de cierre de bajo compromiso (por ejemplo si tiene sentido charlar 15 minutos). Nunca mas de una pregunta. Tono casual-profesional en español rioplatense, cero venta agresiva, sin emojis, sin hashtags. Responde SOLO con un objeto JSON valido con un campo: message (el texto del mensaje de LinkedIn en español). No incluyas ningun otro texto, ni markdown, ni bloques de codigo."
+    },
+    "send": {
+      "mode": "review",
+      "min_score": 0,
+      "default_score": 10,
+      "daily_cap": 3,
+      "min_words": 25,
+      "max_words": 170,
+      "banned_phrases": [
+        "crecimiento reciente",
+        "equipo en expansion",
+        "equipo en expansión",
+        "estan creciendo",
+        "están creciendo",
+        "cultura de trabajo remoto",
+        "compromiso con el trabajo remoto",
+        "equipo en crecimiento",
+        "rapido crecimiento",
+        "rápido crecimiento",
+        "cultura de empresa"
+      ],
+      "signature_must_include": "FMA Solutions",
+      "optout_line": "P.D. Si no es relevante, respondé \"no\" y no vuelvo a escribirte."
+    }
+  },
+  "replies": {
+    "own_emails": [
+      "you@example.com"
+    ],
+    "free_domains": [
+      "gmail.com",
+      "hotmail.com",
+      "outlook.com",
+      "yahoo.com",
+      "icloud.com",
+      "live.com",
+      "proton.me",
+      "protonmail.com"
+    ],
+    "classify_prompt": "Sos un analista que clasifica respuestas a emails de prospeccion B2B para {sender_company}. Te paso el texto de una respuesta real de un prospecto: \"{reply}\". Clasifica si muestra interes genuino en la propuesta (por ejemplo, pide mas informacion, propone una llamada, dice que le interesa, hace una pregunta relacionada), o si NO muestra interes (por ejemplo, dice que no les interesa, pide que no le escriban mas, es una respuesta automatica/fuera de oficina, un rebote, o no tiene relacion con la propuesta). Responde SOLO con un objeto JSON valido con dos campos: interested (true o false) y reason (una frase breve explicando por que). No incluyas ningun otro texto."
+  },
+  "followup": {
+    "after_business_days": 3,
+    "prompt": "Sos {sender_name}, founder de {sender_company}, ayudas a agencias y consultoras B2B en LatAm y EEUU a automatizar el trabajo operativo repetible con IA y n8n. Ya le mandaste hace unos dias un primer email a {name} ({title}) de {company} sobre esto: {details}. Motivo de contacto original: {why}. No respondio todavia. Escribi un mensaje de seguimiento (follow-up) MUY corto, maximo 50 palabras, que retome el hilo del email anterior sin repetir todo el pitch, tono liviano, calido, y de bajo compromiso, no insistente ni presionante. Cierre con una pregunta concreta y de bajo compromiso (por ejemplo si tiene sentido una llamada corta esta semana, o si prefiere que le comparta un caso concreto de una agencia similar). Firma como:\n{signature}\nIMPORTANTE: el email completo, subject y body, tiene que estar TOTALMENTE EN ESPAÑOL. Responde SOLO con un objeto JSON valido con dos campos: subject (asunto corto, en español, se puede usar 'Re: ' como prefijo) y body (el cuerpo del mail en texto plano en español, con saltos de linea como \\n). No incluyas ningun otro texto, ni markdown, ni bloques de codigo."
+  },
+  "report": {
+    "report_title": "Lead gen weekly report"
+  }
+}

@@ -1,0 +1,5 @@
+Fecha,Día,Mes,Año,Tipo,Categoría,Detalle,Moneda,Valor Original,Valor ARS,Valor USD,Origen,ID
+2026-10-01,1,10,2026,Gasto Variable,Supermercado,,ARS,45000,45000,45,reglas,k1x9c
+2026-10-02,2,10,2026,Otro Gasto,Comidas afuera,café,ARS,3000,3000,3,reglas,k1x9d
+2026-10-03,3,10,2026,Ingreso,Freelance,,USD,500,500000,500,reglas,k1y2e
+2026-10-04,4,10,2026,Otro Gasto,Otro,remera,ARS,25000,25000,25,llm,k1y2f

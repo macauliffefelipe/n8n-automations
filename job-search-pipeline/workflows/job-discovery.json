@@ -1,0 +1,554 @@
+{
+  "name": "Job Search Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 8
+            }
+          ]
+        }
+      },
+      "id": "562bfff1-083c-4bf3-8326-746d21ed06da",
+      "name": "Todos los días 8:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        7904,
+        6400
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Vistos",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "c8f9fb70-fe47-4952-a5e9-fc6126a18512",
+      "name": "Leer vistos",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [
+        8128,
+        6400
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Google Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// BUSCAR EN FUENTES: baja los avisos de todas las fuentes y los deja en un formato único.\n// Para agregar o sacar una fuente, tocá el array FUENTES de abajo.\n// Fuentes: Remotive, We Work Remotely, Himalayas, Jobicy y Get on Board (APIs y feeds públicos).\n// Revisá los términos de cada sitio (límites de uso y atribución) antes de usarlo.\n\nconst DIAS_MAX = 21;      // ignora avisos más viejos que esto\nconst TOPE = 150;         // máximo de avisos que pasan a la etapa de scoring por corrida\n\nconst CONSULTAS_HIMALAYAS = ['revenue operations', 'sales operations', 'business operations', 'hubspot', 'automation specialist', 'chief of staff'];\nconst CONSULTAS_GETONBRD = ['operations', 'revenue operations', 'sales operations', 'automation'];\n\nconst UA = { 'User-Agent': 'Mozilla/5.0 (n8n job-search workflow)' };\n// Según la versión de n8n el helper se llama $helpers o helpers\nconst H = typeof $helpers !== 'undefined' ? $helpers : typeof helpers !== 'undefined' ? helpers : null;\nif (!H || !H.httpRequest) throw new Error('Este n8n no expone httpRequest en el nodo Code');\nconst pedir = (url, opts = {}) => H.httpRequest({ method: 'GET', url, headers: UA, timeout: 30000, ...opts });\n\nconst limpiar = (s) => String(s || '').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&#\\d+;/g, ' ').replace(/\\s+/g, ' ').trim();\nconst norm = (s) => String(s || '').toLowerCase().replace(/\\s+/g, ' ').trim();\nconst clave = (a) => `${norm(a.empresa)}|${norm(a.puesto)}`;\nconst corte = (s, n) => (s.length > n ? s.slice(0, n) + ' [...]' : s);\n\nfunction itemsRSS(xml) {\n  const out = [];\n  const re = /<item>([\\s\\S]*?)<\\/item>/g;\n  let m;\n  while ((m = re.exec(xml))) {\n    const b = m[1];\n    const campo = (t) => {\n      const r = new RegExp(`<${t}>([\\\\s\\\\S]*?)</${t}>`).exec(b);\n      if (!r) return '';\n      return limpiar(r[1].replace(/<!\\[CDATA\\[|\\]\\]>/g, ''));\n    };\n    out.push({ title: campo('title'), link: campo('link'), pubDate: campo('pubDate'), region: campo('region'), country: campo('country'), type: campo('type'), description: campo('description') });\n  }\n  return out;\n}\n\nconst FUENTES = [\n  {\n    nombre: 'Remotive',\n    async traer() {\n      // La API gratis devuelve como máximo 15 avisos y pide no llamarla más de 4 veces por día\n      const r = await pedir('https://remotive.com/api/remote-jobs?limit=100');\n      return (r.jobs || []).map((j) => ({\n        empresa: j.company_name,\n        puesto: j.title,\n        link: j.url,\n        region: j.candidate_required_location || '',\n        publicado: j.publication_date || '',\n        salario_txt: j.salary || '',\n        contrato_txt: j.job_type || '',\n        desc: limpiar(j.description),\n      }));\n    },\n  },\n  {\n    nombre: 'WeWorkRemotely',\n    async traer() {\n      const feeds = [\n        'https://weworkremotely.com/categories/remote-sales-and-marketing-jobs.rss',\n        'https://weworkremotely.com/categories/remote-management-and-finance-jobs.rss',\n        'https://weworkremotely.com/categories/all-other-remote-jobs.rss',\n      ];\n      const out = [];\n      for (const f of feeds) {\n        const xml = await pedir(f);\n        for (const it of itemsRSS(String(xml))) {\n          const partes = it.title.split(':');\n          const empresa = partes.length > 1 ? partes[0].trim() : '';\n          const puesto = partes.length > 1 ? partes.slice(1).join(':').trim() : it.title;\n          out.push({ empresa, puesto, link: it.link, region: [it.region, it.country].filter(Boolean).join(', '), publicado: it.pubDate, salario_txt: '', contrato_txt: it.type, desc: it.description });\n        }\n      }\n      return out;\n    },\n  },\n  {\n    nombre: 'Himalayas',\n    async traer() {\n      const out = [];\n      for (const q of CONSULTAS_HIMALAYAS) {\n        const r = await pedir(`https://himalayas.app/jobs/api/search?q=${encodeURIComponent(q)}`);\n        for (const j of r.jobs || []) {\n          const salario = j.minSalary || j.maxSalary ? `${j.minSalary || ''}-${j.maxSalary || ''} ${j.currency || ''} ${j.salaryPeriod || ''}` : '';\n          out.push({\n            empresa: j.companyName,\n            puesto: j.title,\n            link: j.applicationLink || `https://himalayas.app/companies/${j.companySlug}/jobs`,\n            region: (j.locationRestrictions || []).join(', '),\n            publicado: j.pubDate ? new Date(j.pubDate * 1000 || j.pubDate).toISOString() : '',\n            salario_txt: salario,\n            contrato_txt: [j.employmentType, (j.seniority || []).join('/')].filter(Boolean).join(' '),\n            desc: limpiar(j.description || j.excerpt),\n          });\n        }\n      }\n      return out;\n    },\n  },\n  {\n    nombre: 'Jobicy',\n    async traer() {\n      const r = await pedir('https://jobicy.com/api/v2/remote-jobs?count=50&geo=latam');\n      return (r.jobs || []).map((j) => ({\n        empresa: j.companyName,\n        puesto: j.jobTitle,\n        link: j.url,\n        region: Array.isArray(j.jobGeo) ? j.jobGeo.join(', ') : j.jobGeo || '',\n        publicado: j.pubDate || '',\n        salario_txt: j.annualSalaryMin ? `${j.annualSalaryMin}-${j.annualSalaryMax || ''} ${j.salaryCurrency || 'USD'} anual` : '',\n        contrato_txt: [].concat(j.jobType || [], j.jobLevel || []).join(' '),\n        desc: limpiar(j.jobDescription || j.jobExcerpt),\n      }));\n    },\n  },\n  {\n    nombre: 'GetOnBoard',\n    async traer() {\n      const out = [];\n      for (const q of CONSULTAS_GETONBRD) {\n        const r = await pedir(`https://www.getonbrd.com/api/v0/search/jobs?query=${encodeURIComponent(q)}&per_page=25&expand=${encodeURIComponent('[\"company\"]')}`);\n        for (const j of r.data || []) {\n          const a = j.attributes || {};\n          if (a.remote === false) continue; // presencial o híbrido, no sirve\n          out.push({\n            empresa: (a.company && a.company.data && a.company.data.attributes && a.company.data.attributes.name) || 'Get on Board',\n            puesto: a.title,\n            link: (j.links && j.links.public_url) || `https://www.getonbrd.com/jobs/${j.id}`,\n            region: `Latin America ${a.remote_zone || ''} ${(a.countries || []).join(', ')}`.trim(),\n            publicado: a.published_at ? new Date(a.published_at * 1000).toISOString() : '',\n            salario_txt: a.min_salary ? `${a.min_salary}-${a.max_salary || ''} USD mensual` : '',\n            contrato_txt: a.modality || '',\n            desc: limpiar(`${a.description_headline || ''} ${a.description || ''} ${a.functions || ''}`),\n          });\n        }\n      }\n      return out;\n    },\n  },\n];\n\nconst diag = { por_fuente: {}, errores: [] };\nconst crudos = [];\n\nfor (const f of FUENTES) {\n  try {\n    const avisos = await f.traer();\n    diag.por_fuente[f.nombre] = avisos.length;\n    if (!avisos.length) diag.errores.push(`${f.nombre}: no devolvió avisos`);\n    for (const a of avisos) crudos.push({ ...a, fuente: f.nombre });\n  } catch (e) {\n    diag.por_fuente[f.nombre] = 0;\n    diag.errores.push(`${f.nombre}: ${String(e.message || e).slice(0, 120)}`);\n  }\n}\n\n// Filtra viejos, deduplica dentro de la misma corrida y ordena por fecha\nconst limite = Date.now() - DIAS_MAX * 24 * 60 * 60 * 1000;\nconst vistas = new Set();\nconst salida = [];\n\nfor (const a of crudos) {\n  if (!a.puesto || !a.link) continue;\n  const ts = Date.parse(a.publicado) || 0;\n  if (ts && ts < limite) continue;\n  const k = clave(a);\n  if (vistas.has(k)) continue;\n  vistas.add(k);\n  salida.push({\n    json: {\n      clave: k,\n      empresa: a.empresa || '(sin empresa)',\n      puesto: a.puesto,\n      link: a.link,\n      region: a.region || '',\n      publicado: a.publicado || '',\n      publicado_ts: ts,\n      salario_txt: a.salario_txt || '',\n      contrato_txt: a.contrato_txt || '',\n      desc: corte(String(a.desc || ''), 2500),\n      fuente: a.fuente,\n    },\n  });\n}\n\nsalida.sort((x, y) => (y.json.publicado_ts || 0) - (x.json.publicado_ts || 0));\n\nconst sd = $getWorkflowStaticData('global');\nsd.diag = { ...diag, total: crudos.length, unicos: salida.length, fecha: new Date().toISOString() };\n\nreturn salida.slice(0, TOPE * 3); // el tope final se aplica después de deduplicar contra el Sheet\n"
+      },
+      "id": "af090da4-4943-4189-8548-0b4b0923ed21",
+      "name": "Buscar en fuentes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        8352,
+        6400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// FILTRAR Y DEDUPLICAR: saca lo que ya viste y aplica los descartes por regla (sin IA).\n// Acá se ajusta qué regiones y qué rubros valen la pena.\n\nconst TOPE_IA = 120; // máximo de avisos que se mandan a Ollama por corrida\n\nconst LATAM = /(latam|latin america|south america|américa latina|america latina|americas|argentina|brasil|brazil|mexico|méxico|colombia|chile|per[uú]|uruguay|paraguay|bolivia|ecuador|costa rica|guatemala|panam[aá]|rep[uú]blica dominicana)/i;\nconst ABIERTO = /(anywhere|worldwide|global|remote, any|any location|sin restricci)/i;\n\nconst RUBRO_EXCLUIDO = /(designer|design lead|ux\\b|ui\\/ux|graphic|illustrator|animator|3d |video editor|\\beditor\\b|copywriter|content writer|proofreader|technical author|seo\\b|paid media|ppc|media buyer|performance marketing|salesforce (admin|developer)|software engineer|developer|backend|front.?end|full.?stack|devops|\\bsre\\b|site reliability|infrastructure|kubernetes|containeriz|virtualis|microservices|security engineer|cloud engineer|field engineer|solution(s)? architect|architecture manager|engineering manager|data engineer|machine learning|ml engineer|qa engineer|\\bcad\\b|drafter|nurse|\\brn\\b|medical|construction|attorney|paralegal|architect\\b|electrician|driver|teacher)/i;\n// Títulos que igual valen aunque tengan una palabra de la lista de arriba\nconst RUBRO_RESCATE = /(revenue operations|revops|sales ops|business operations|automation|crm|hubspot|ai agent|workflow)/i;\nconst SOLO_COMISION = /(commission[- ]only|100% commission|comisi[oó]n pura|solo comisi[oó]n|uncapped commission only)/i;\n// Puestos que exigen estar o ser de EE.UU. aunque el aviso figure como remoto\nconst SOLO_EEUU = /(security clearance|us citizen|u\\.s\\. citizen|citizenship required|must reside in the (us|united states)|based in the united states|w-2 only|federal government|public trust clearance)/i;\n\n// Si el aviso dice dónde tenés que estar y no incluye LATAM ni \"anywhere\", se descarta.\n// Si no dice nada, pasa igual y lo decide el score.\nfunction regionOk(texto) {\n  const t = String(texto || '');\n  if (!t.trim()) return 'desconocida';\n  if (LATAM.test(t) || ABIERTO.test(t)) return 'ok';\n  return 'no';\n}\n\n// Claves que ya pasaron por acá en corridas anteriores\nconst yaVistas = new Set(\n  $('Leer vistos').all()\n    .map((it) => String(it.json.clave || '').trim())\n    .filter(Boolean)\n);\n\nconst nuevos = [];\n\nfor (const it of $input.all()) {\n  const j = it.json;\n  if (yaVistas.has(j.clave)) continue;\n\n  const texto = `${j.puesto} ${j.desc}`;\n  let resultado = 'ok';\n  let motivo_descarte = '';\n\n  const reg = regionOk(j.region);\n  if (reg === 'no') {\n    resultado = 'descartado_region';\n    motivo_descarte = `Región: ${j.region}`;\n  } else if (RUBRO_EXCLUIDO.test(j.puesto) && !RUBRO_RESCATE.test(j.puesto)) {\n    resultado = 'descartado_rubro';\n    motivo_descarte = 'Rubro fuera de tu búsqueda';\n  } else if (SOLO_COMISION.test(texto)) {\n    resultado = 'descartado_comision';\n    motivo_descarte = 'Solo comisión';\n  } else if (SOLO_EEUU.test(texto)) {\n    resultado = 'descartado_region';\n    motivo_descarte = 'Pide ciudadanía o residencia en EE.UU.';\n  }\n\n  nuevos.push({ json: { ...j, resultado, motivo_descarte, region_check: reg } });\n}\n\n// Los que van a Ollama: primero los más nuevos, con tope\nlet paraIA = 0;\nfor (const n of nuevos) {\n  if (n.json.resultado !== 'ok') continue;\n  paraIA += 1;\n  if (paraIA > TOPE_IA) {\n    n.json.resultado = 'pendiente_proxima_corrida';\n    n.json.motivo_descarte = 'Tope de la corrida, se evalúa mañana';\n  }\n}\n\nconst sd = $getWorkflowStaticData('global');\nsd.diag = { ...(sd.diag || {}), nuevos: nuevos.length, a_ia: Math.min(paraIA, TOPE_IA) };\n\nreturn nuevos;\n"
+      },
+      "id": "8510ba2e-2ab5-417c-b168-d2340141c30f",
+      "name": "Filtrar y deduplicar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        8576,
+        6400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "76731947-3510-40b7-90aa-1b4120e13302",
+              "leftValue": "={{ $json.resultado }}",
+              "rightValue": "ok",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "9ecdd9eb-4173-421e-b288-f682746f0d8d",
+      "name": "Vale la pena evaluar?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        8800,
+        6400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ARMAR PROMPT EMPLEO: el modelo solo extrae datos del aviso. Los descartes y el score los decide el nodo Puntuar.\n\nconst MODELO = 'qwen2.5:7b';\n\nconst PERFIL = `La persona busca trabajo remoto (contractor o empleado) cobrando en USD y vive en América Latina. Es especialista en Revenue Operations y automatización: administra HubSpot y otros CRM, construye automatizaciones en n8n, Zapier y Make, enriquece leads y arma reportes de pipeline. Inglés fluido. EDITÁ ESTE TEXTO con tu propio perfil.`;\n\nconst SYSTEM = `Leés un aviso de trabajo y devolvés SOLO JSON con datos extraídos del aviso. No opinás ni puntuás.\n\nPERFIL DE QUIEN BUSCA:\n${PERFIL}\n\n\"familia_rol\": la que mejor describe el puesto.\n- \"revops_salesops_bizops\": Revenue Ops, Sales Ops, Business Ops, Operations Manager o Analyst.\n- \"hubspot_crm_admin\": administrar, implementar o configurar un CRM (HubSpot, CRM admin, CRM manager).\n- \"automation_ai\": Automation Specialist, AI Automation, workflow o process automation, n8n/Zapier/Make, agentes de IA.\n- \"marketing_ops\": Marketing Operations, lifecycle, email ops.\n- \"chief_of_staff_ea\": Chief of Staff, Executive Assistant, asistente de founder.\n- \"customer_success_account\": Customer Success, Account Manager, Client Ops.\n- \"sdr_bdr_ventas\": SDR, BDR, Account Executive, ventas.\n- \"project_coordinator\": Project Manager o Coordinator, PMO.\n- \"otro\": cualquier otra cosa.\n\n\"anios_requeridos\": años de experiencia que pide el aviso, como número. null si no lo dice. Nunca pongas 0. Si dice un rango, usá el mínimo.\n\n\"requiere_documentos_us\": true solo si el aviso exige autorización para trabajar en EE.UU., ciudadanía o residencia estadounidense, green card, visa, security clearance, estar físicamente en EE.UU. o cobrar como W-2. false si no lo pide o si no dice nada.\n\n\"paises_permitidos\": lista de países o regiones que el aviso permite de forma explícita, como los escribe el aviso (ej: [\"Brazil\",\"Peru\"], [\"LATAM\"], [\"Anywhere\"]). Lista vacía si el aviso no aclara desde dónde se puede trabajar.\n\n\"herramientas\": hasta 6 herramientas o plataformas que el aviso nombra de forma literal, en minúscula. [] si no nombra ninguna. Nunca inventes.\n\n\"pago_usd_mes\": pago mensual en dólares. Si el aviso da un rango, el promedio. Si es anual, dividido por 12. Si es por hora, por 160. null si no dice.\n\n\"contrato\": \"contractor\" solo si el aviso dice contractor, freelance, 1099 o B2B. \"empleado\" si habla de relación de dependencia o beneficios. \"no_dice\" si no aclara.\n\n\"motivo\": una oración en español, máximo 20 palabras: qué es el puesto y qué pide.`;\n\nconst SCHEMA = {\n  type: 'object',\n  properties: {\n    familia_rol: { type: 'string', enum: ['revops_salesops_bizops', 'hubspot_crm_admin', 'automation_ai', 'marketing_ops', 'chief_of_staff_ea', 'customer_success_account', 'sdr_bdr_ventas', 'project_coordinator', 'otro'] },\n    anios_requeridos: { type: ['integer', 'null'] },\n    requiere_documentos_us: { type: 'boolean' },\n    paises_permitidos: { type: 'array', items: { type: 'string' } },\n    herramientas: { type: 'array', items: { type: 'string' } },\n    pago_usd_mes: { type: ['number', 'null'] },\n    contrato: { type: 'string', enum: ['contractor', 'empleado', 'no_dice'] },\n    motivo: { type: 'string' },\n  },\n  required: ['familia_rol', 'anios_requeridos', 'requiere_documentos_us', 'paises_permitidos', 'herramientas', 'pago_usd_mes', 'contrato', 'motivo'],\n};\n\nreturn $input.all().map((item, i) => {\n  const j = item.json;\n  const user = `Puesto: ${j.puesto}\nEmpresa: ${j.empresa}\nRegión que figura en el portal: ${j.region || 'no dice'}\nTipo de contrato que figura: ${j.contrato_txt || 'no dice'}\nSueldo que figura: ${j.salario_txt || 'no dice'}\nDescripción:\n${j.desc || '(el aviso no trae descripción)'}`;\n\n  return {\n    json: {\n      ...j,\n      ollama_request: {\n        model: MODELO,\n        stream: false,\n        format: SCHEMA,\n        keep_alive: '15m',\n        options: { temperature: 0, num_ctx: 4096 },\n        messages: [\n          { role: 'system', content: SYSTEM },\n          { role: 'user', content: user },\n        ],\n      },\n    },\n    pairedItem: { item: i },\n  };\n});\n"
+      },
+      "id": "3f33b3e9-4eec-410e-b8c2-9b35650ece9b",
+      "name": "Armar prompt empleo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        9024,
+        6400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// PUNTUAR: descarta con reglas duras lo que no te sirve y puntúa el resto.\n// Todo lo configurable está en este bloque de arriba.\n\nconst MAX_ANIOS = 3;            // se descarta el aviso que pida MÁS de estos años (ejemplo: 4 o más, fuera)\nconst PAGO_MIN = 1500;          // USD por mes (ejemplo)\nconst FAMILIA_OBJETIVO = ['revops_salesops_bizops', 'hubspot_crm_admin', 'automation_ai'];\nconst FAMILIA_SECUNDARIA = ['customer_success_account', 'sdr_bdr_ventas'];\n// Lo que no esté en esas dos listas se descarta por rubro (marketing ops, chief of staff, PM, otro)\n\nconst MIS_HERRAMIENTAS = ['hubspot', 'clay', 'apollo', 'sales navigator', 'n8n', 'zapier', 'make', 'power bi', 'excel', 'google sheets', 'google analytics', 'notion', 'asana', 'clickup', 'webhook', 'rest api', 'openai', 'claude', 'gpt', 'ocr'];\nconst DIFERENCIALES = ['hubspot', 'n8n']; // suman un punto extra\n\nconst NOMBRE_FAMILIA = {\n  revops_salesops_bizops: 'RevOps / Sales Ops / BizOps',\n  hubspot_crm_admin: 'HubSpot / CRM admin',\n  automation_ai: 'Automatización / IA',\n  marketing_ops: 'Marketing Ops',\n  chief_of_staff_ea: 'Chief of Staff / EA',\n  customer_success_account: 'Customer Success / Account',\n  sdr_bdr_ventas: 'Ventas / SDR',\n  project_coordinator: 'Project Coordinator',\n  otro: 'Otro',\n};\n\n// Países o regiones desde donde se puede trabajar (editá según tu caso)\nconst PAIS_OK = /(argentina|latam|latin america|south america|américa latina|america latina|americas|anywhere|worldwide|global)/i;\n// Redes de seguridad por si el modelo no marca el campo\nconst RE_DOCS_US = /(authorized to work in the (us|u\\.s\\.|united states)|work authorization|us work authorization|must be (a )?(us|u\\.s\\.) (citizen|resident)|green card|security clearance|w-?2 (only|employee)|eligible to work in the united states|visa sponsorship is not)/i;\nconst RE_VENTAS = /\\b(sdr|bdr|account executive|business development (rep|representative|associate)|sales (rep|representative|associate)|inside sales|client development|client partner)\\b/i;\nconst RE_CS = /(customer success|account manager|customer support|client services)/i;\nconst RE_CONTRACTOR = /(contractor|freelance|1099|\\bb2b\\b|independent contractor|contrato de servicios)/i;\n\nfunction leerJSON(j) {\n  const raw = (j && ((j.message && j.message.content) || j.output || j.text || j.response)) || '';\n  const txt = String(raw).replace(/```(?:json)?/gi, '');\n  const ini = txt.indexOf('{');\n  const fin = txt.lastIndexOf('}');\n  if (ini < 0 || fin <= ini) throw new Error('sin JSON');\n  return JSON.parse(txt.slice(ini, fin + 1));\n}\n\nconst base = $('Armar prompt empleo').all();\nconst hoy = new Date().toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires', day: '2-digit', month: '2-digit', year: 'numeric' });\nconst conteo = {};\n\nconst salida = $input.all().map((r, i) => {\n  // Empareja por pairedItem (no por posición); si el linaje se pierde, cae al índice\n  const j = (() => { try { return $('Armar prompt empleo').itemMatching(i).json; } catch (e) { return base[i].json; } })();\n  let p = null;\n  let falloIA = false;\n\n  try {\n    p = leerJSON(r.json);\n  } catch (e) {\n    p = { familia_rol: 'otro', anios_requeridos: null, requiere_documentos_us: false, paises_permitidos: [], herramientas: [], pago_usd_mes: null, contrato: 'no_dice', motivo: '(Ollama no respondió, revisalo a mano)' };\n    falloIA = true;\n  }\n\n  const texto = `${j.puesto} ${j.desc}`.toLowerCase();\n\n  // Correcciones sobre lo que extrajo el modelo\n  if (RE_VENTAS.test(j.puesto)) p.familia_rol = 'sdr_bdr_ventas';\n  else if (RE_CS.test(j.puesto)) p.familia_rol = 'customer_success_account';\n  p.herramientas = (Array.isArray(p.herramientas) ? p.herramientas : []).filter((h) => texto.includes(String(h).toLowerCase()));\n  if (p.contrato === 'contractor' && !RE_CONTRACTOR.test(texto)) p.contrato = 'no_dice';\n  if (p.anios_requeridos === 0) p.anios_requeridos = null;\n  if (Number.isFinite(p.pago_usd_mes) && p.pago_usd_mes < 500) p.pago_usd_mes = null;\n  if (RE_DOCS_US.test(texto)) p.requiere_documentos_us = true;\n\n  const anios = Number.isFinite(p.anios_requeridos) ? p.anios_requeridos : null;\n  // \"Remote\" a secas no es un país: se ignora, así \"Remote (US only)\" no se cuela\n  const paises = (Array.isArray(p.paises_permitidos) ? p.paises_permitidos.filter(Boolean) : [])\n    .filter((c) => !/^(remote|remoto|fully remote|100% remote|work from home)$/i.test(String(c).trim()));\n\n  // Descartes duros, en orden\n  let resultado = 'ok';\n  let motivo_descarte = '';\n\n  if (falloIA) {\n    resultado = 'sin_evaluar';\n    motivo_descarte = 'Ollama no respondió';\n  } else if (p.requiere_documentos_us) {\n    resultado = 'descartado_documentos_us';\n    motivo_descarte = 'Pide papeles para trabajar en EE.UU.';\n  } else if (paises.length && !paises.some((c) => PAIS_OK.test(c))) {\n    resultado = 'descartado_pais';\n    motivo_descarte = `Solo acepta: ${paises.slice(0, 4).join(', ')}`;\n  } else if (anios !== null && anios > MAX_ANIOS) {\n    resultado = 'descartado_anios';\n    motivo_descarte = `Pide ${anios} años`;\n  } else if (!FAMILIA_OBJETIVO.includes(p.familia_rol) && !FAMILIA_SECUNDARIA.includes(p.familia_rol)) {\n    resultado = 'descartado_rubro';\n    motivo_descarte = `Rol fuera de tu búsqueda: ${NOMBRE_FAMILIA[p.familia_rol] || p.familia_rol}`;\n  }\n\n  conteo[resultado] = (conteo[resultado] || 0) + 1;\n\n  // Score, solo para los que pasaron\n  const razones = [];\n  let score = 0;\n  let tipo_rol = 'descartado';\n\n  if (resultado === 'ok') {\n    if (FAMILIA_OBJETIVO.includes(p.familia_rol)) { score += 4; tipo_rol = 'objetivo'; razones.push('rol objetivo'); }\n    else { score += 2; tipo_rol = 'secundario'; razones.push('rol secundario'); }\n\n    if (anios === null) { score += 1; razones.push('no dice años'); }\n    else { score += 2; razones.push(`pide ${anios} años`); }\n\n    const match = p.herramientas.filter((h) => MIS_HERRAMIENTAS.some((m) => h.includes(m)));\n    if (match.length) { score += Math.min(2, match.length); razones.push(`usa ${match.slice(0, 3).join(', ')}`); }\n    if (DIFERENCIALES.some((d) => texto.includes(d))) { score += 1; razones.push('nombra HubSpot o n8n'); }\n\n    const pago = Number.isFinite(p.pago_usd_mes) ? Math.round(p.pago_usd_mes) : null;\n    if (pago === null) { score += 1; razones.push('no publica sueldo'); }\n    else if (pago >= PAGO_MIN) { score += 2; razones.push(`USD ${pago}/mes`); }\n    else razones.push(`USD ${pago}/mes, bajo`);\n\n    if (p.contrato === 'contractor') { score += 1; razones.push('contractor'); }\n    score = Math.min(10, score);\n  } else {\n    razones.push(motivo_descarte);\n  }\n\n  const herramientasTxt = p.herramientas.filter((h) => MIS_HERRAMIENTAS.some((m) => h.includes(m))).join(', ');\n\n  return {\n    json: {\n      fecha_detectado: hoy,\n      score,\n      empresa: j.empresa,\n      puesto: j.puesto,\n      tipo_rol: resultado === 'ok' ? `${tipo_rol} (${NOMBRE_FAMILIA[p.familia_rol]})` : resultado,\n      region: paises.length ? paises.join(', ') : j.region || 'no dice',\n      experiencia_anios: anios === null ? '' : anios,\n      pago_usd_mes: Number.isFinite(p.pago_usd_mes) ? Math.round(p.pago_usd_mes) : '',\n      contrato: p.contrato,\n      herramientas_match: herramientasTxt,\n      motivo: `${razones.join(', ')}. ${String(p.motivo || '').trim()}`.slice(0, 300),\n      fuente: j.fuente,\n      link: j.link,\n      publicado: j.publicado || '',\n      clave: j.clave,\n      estado: 'nuevo',\n      resultado,\n    },\n    pairedItem: { item: i },\n  };\n});\n\nconst sd = $getWorkflowStaticData('global');\nsd.diag = { ...(sd.diag || {}), post_ia: conteo };\n\nreturn salida;\n"
+      },
+      "id": "1a9e7898-388e-40e3-a4e0-e6616214d444",
+      "name": "Puntuar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        9600,
+        6400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c72d4c68-98d3-450a-b24c-1e614148e584",
+              "leftValue": "={{ $json.score }}",
+              "rightValue": 6,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "4e5f4c92-0f03-493d-a88e-0b1536c5b077",
+      "name": "Score 6 o más",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        9824,
+        6208
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Pipeline",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "id": "47e29895-a27c-4c1e-b53e-c714c1952f4e",
+      "name": "Guardar en Pipeline",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [
+        10048,
+        6208
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Google Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ARMAR VISTOS: una fila por cada aviso nuevo de hoy, tanto los que entran al pipeline como los descartados.\n// Es la memoria del workflow y la fuente de los números para tu case study.\n\nconst hoy = new Date().toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires', day: '2-digit', month: '2-digit', year: 'numeric' });\n\nconst puntuados = new Map();\nfor (const it of $input.all()) puntuados.set(it.json.clave, it.json);\n\n// Los que quedaron fuera por el tope del día NO se guardan: así mañana se evalúan.\nreturn $('Filtrar y deduplicar').all()\n  .filter((it) => it.json.resultado !== 'pendiente_proxima_corrida')\n  .map((it, i) => {\n  const j = it.json;\n  const p = puntuados.get(j.clave);\n  let resultado = j.resultado;\n  let score = '';\n\n  if (p) {\n    score = p.score;\n    // Si Puntuar lo descartó, ese es el resultado; si no, depende del score\n    resultado = p.resultado !== 'ok' ? p.resultado : p.score >= 6 ? 'pipeline' : 'score_bajo';\n  }\n\n  // Si el modelo no pudo leer el aviso, no se recuerda: se vuelve a evaluar mañana.\n  if (resultado === 'sin_evaluar') return null;\n  return { json: { clave: j.clave, fecha: hoy, fuente: j.fuente, resultado, score }, pairedItem: { item: i } };\n}).filter(Boolean);\n"
+      },
+      "id": "cb773ba8-3ce4-4c17-aa79-3855b353592b",
+      "name": "Armar vistos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        9824,
+        6400
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Vistos",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "id": "d586533b-554c-4def-af39-b3de22eb1f5c",
+      "name": "Guardar en Vistos",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [
+        10048,
+        6400
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Google Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// DIGEST: top 10 del día para Telegram, más los números de la corrida y el aviso si una fuente se rompió.\n\nconst TOP = 10;\nconst MINIMO = 6;\nconst LIMITE_TELEGRAM = 3900;\n\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst sd = $getWorkflowStaticData('global');\nconst diag = sd.diag || {};\n\nconst items = $input.all().map((it) => it.json);\nconst buenos = items.filter((j) => j.resultado === 'ok' && Number(j.score) >= MINIMO).sort((a, b) => b.score - a.score);\nconst hoy = new Date().toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires', day: '2-digit', month: '2-digit' });\n\nconst porFuente = Object.entries(diag.por_fuente || {}).map(([k, v]) => `${k} ${v}`).join(' · ');\n\nconst ETIQUETA_DESCARTE = {\n  descartado_anios: 'piden más años de los que tenés',\n  descartado_documentos_us: 'piden papeles de EE.UU.',\n  descartado_pais: 'no aceptan Argentina',\n  descartado_rubro: 'rol fuera de tu búsqueda',\n  sin_evaluar: 'Ollama no respondió',\n};\nconst postIA = diag.post_ia || {};\nconst descartes = Object.entries(postIA)\n  .filter(([k]) => k !== 'ok')\n  .map(([k, v]) => `${v} ${ETIQUETA_DESCARTE[k] || k}`)\n  .join(' · ');\n\nlet msg = `<b>Búsqueda laboral · ${hoy}</b>\\nAvisos bajados: ${diag.total || 0} · Nuevos: ${diag.nuevos || 0} · Evaluados: ${items.length} · Al pipeline: ${buenos.length}`;\n\nif ((diag.errores || []).length) {\n  msg += `\\n\\n<b>Ojo:</b> ${esc(diag.errores.join(' | '))}`;\n}\n\nif (descartes) msg += `\\nDescartados al leerlos: ${descartes}`;\n\nif (!buenos.length) {\n  // Muestra igual lo mejor del día, así se ve si fue por las reglas o porque el modelo falló\n  const fallaronIA = items.filter((j) => /Ollama no respondió/i.test(j.motivo || '')).length;\n  msg += `\\n\\nHoy no salió nada con score ${MINIMO} o más.`;\n  if (fallaronIA) msg += `\\n<b>${fallaronIA} de ${items.length} fallaron en Ollama.</b> Revisá que el modelo esté levantado.`;\n  const mejores = items.sort((a, b) => b.score - a.score).slice(0, 3);\n  if (mejores.length) {\n    msg += '\\n\\n<b>Lo mejor que salió igual:</b>';\n    for (const j of mejores) {\n      const linea = `\\n\\n<b>${j.score}/10 · ${esc(j.puesto)}</b>\\n${esc(j.empresa)} · ${esc(j.region)} · ${esc(j.fuente)}\\n${esc(j.motivo)}\\n<a href=\"${esc(j.link)}\">ver aviso</a>`;\n      if ((msg + linea).length > LIMITE_TELEGRAM) break;\n      msg += linea;\n    }\n  }\n} else {\n  for (const j of buenos.slice(0, TOP)) {\n    const datos = [\n      j.experiencia_anios !== '' ? `${j.experiencia_anios} años` : null,\n      j.pago_usd_mes !== '' ? `USD ${j.pago_usd_mes}/mes` : null,\n      j.region,\n      j.fuente,\n    ].filter(Boolean).join(' · ');\n    const linea = `\\n\\n<b>${j.score}/10 · ${esc(j.puesto)}</b>\\n${esc(j.empresa)} · ${esc(datos)}\\n${esc(j.motivo)}\\n<a href=\"${esc(j.link)}\">ver aviso</a>`;\n    if ((msg + linea).length > LIMITE_TELEGRAM) break;\n    msg += linea;\n  }\n  if (buenos.length > TOP) msg += `\\n\\nY ${buenos.length - TOP} más en la planilla.`;\n}\n\nmsg += `\\n\\n<i>${esc(porFuente)}</i>`;\n\nsd.digest_fecha = DateTime.now().setZone('America/Argentina/Buenos_Aires').toFormat('yyyy-MM-dd');\n\nreturn [{ json: { mensaje: msg } }];\n"
+      },
+      "id": "bbcb9f09-1377-449b-84fa-74b83cdb2372",
+      "name": "Armar digest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        9824,
+        6592
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "={{ $json.mensaje }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "disable_web_page_preview": true,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "75614303-afcb-4ead-b319-8ee94ff21169",
+      "name": "Digest Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        10048,
+        6592
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:11434/api/chat",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.ollama_request) }}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "id": "6cac3cd1-c1de-4048-9e40-879afab3a345",
+      "name": "Ollama extraer datos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        9248,
+        6400
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput",
+      "notes": "Sends the request body built in \"Armar prompt empleo\" as is: model, JSON schema, temperature 0, context size. Edit the URL to match where Ollama runs."
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "45 8 * * *"
+            }
+          ]
+        }
+      },
+      "id": "2a3b0d1e-b72c-4b0b-95da-d25ebd208719",
+      "name": "Heartbeat 8:45",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        7904,
+        6800
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// HEARTBEAT: si hoy no salió el digest, avisa por qué. Si ya salió, no dice nada.\n// Cubre tres casos: el workflow no corrió, todas las fuentes fallaron, o no hubo avisos nuevos.\n// Nota: los datos de ejecución se guardan solo en corridas de producción (workflow activo).\nconst sd = $getWorkflowStaticData('global');\nconst TZ = 'America/Argentina/Buenos_Aires';\nconst hoy = DateTime.now().setZone(TZ).toFormat('yyyy-MM-dd');\n\nif (sd.digest_fecha === hoy) return [];\n\nconst diag = sd.diag || {};\nconst corrioHoy = diag.fecha && DateTime.fromISO(diag.fecha).setZone(TZ).toFormat('yyyy-MM-dd') === hoy;\nconst errores = diag.errores || [];\n\nlet mensaje;\nif (!corrioHoy) {\n  mensaje = '⚠️ Búsqueda laboral: la corrida de las 8:00 no se ejecutó hoy. Revisá que el workflow esté activo y n8n levantado.';\n} else {\n  mensaje = 'ℹ️ Búsqueda laboral: hoy no hay nada para revisar. Bajados ' + (diag.total || 0) + ', nuevos ' + (diag.nuevos || 0) + '.';\n  if (errores.length) mensaje += ' Problemas en fuentes: ' + errores.join(' | ');\n}\n\nreturn [{ json: { mensaje } }];\n"
+      },
+      "id": "0741e0ef-0845-4137-b057-22a414d3fb78",
+      "name": "Check last run",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        8128,
+        6800
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "={{ $json.mensaje }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "disable_web_page_preview": true
+        }
+      },
+      "id": "a2eb9bf5-8adf-4c60-8029-69037720c564",
+      "name": "Heartbeat Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        8352,
+        6800
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Telegram Bot"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Todos los días 8:00": {
+      "main": [
+        [
+          {
+            "node": "Leer vistos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer vistos": {
+      "main": [
+        [
+          {
+            "node": "Buscar en fuentes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar en fuentes": {
+      "main": [
+        [
+          {
+            "node": "Filtrar y deduplicar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filtrar y deduplicar": {
+      "main": [
+        [
+          {
+            "node": "Vale la pena evaluar?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vale la pena evaluar?": {
+      "main": [
+        [
+          {
+            "node": "Armar prompt empleo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar prompt empleo": {
+      "main": [
+        [
+          {
+            "node": "Ollama extraer datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Puntuar": {
+      "main": [
+        [
+          {
+            "node": "Score 6 o más",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Armar vistos",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Armar digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Score 6 o más": {
+      "main": [
+        [
+          {
+            "node": "Guardar en Pipeline",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar vistos": {
+      "main": [
+        [
+          {
+            "node": "Guardar en Vistos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar digest": {
+      "main": [
+        [
+          {
+            "node": "Digest Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama extraer datos": {
+      "main": [
+        [
+          {
+            "node": "Puntuar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Heartbeat 8:45": {
+      "main": [
+        [
+          {
+            "node": "Check last run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check last run": {
+      "main": [
+        [
+          {
+            "node": "Heartbeat Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false,
+    "timeSavedPerExecution": 90,
+    "timezone": "America/Argentina/Buenos_Aires"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

@@ -1,0 +1,18 @@
+# Secrets and raw exports must never enter this repo
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials*.json
+service-account*.json
+*.raw.json
+n8n-originales/
+originales/
+_private/
+
+# Local noise
+.DS_Store
+Thumbs.db
+node_modules/
+*.log

@@ -1,0 +1,356 @@
+{
+  "profile": "b2b-services-consultancy",
+  "shared": {
+    "timezone": "America/Argentina/Buenos_Aires",
+    "language": "en",
+    "sender": {
+      "name": "Your Name",
+      "title": "Business Development",
+      "company": "Your Company",
+      "signature": "Your Name\nBusiness Development\nYour Company",
+      "email": "you@example.com",
+      "review_email": "you@example.com"
+    },
+    "models": {
+      "email": "qwen2.5:14b",
+      "linkedin": "qwen3:4b",
+      "score": "qwen2.5:14b",
+      "classify": "llama3.2:3b",
+      "followup": "qwen3:4b"
+    }
+  },
+  "discovery": {
+    "sources": {
+      "adzuna": {
+        "enabled": true,
+        "country": "us",
+        "max_days_old": 40,
+        "keep_regex": "(head of sales|\\bvp\\b.{0,30}sales|vice president.{0,30}sales|director of sales|sales director|sales manager|account executive|sales development|\\bsdr\\b|\\bbdr\\b|business development (manager|executive|representative|director)|chief revenue|revenue officer|founding[^a-z]{0,25}sales)",
+        "queries": [
+          {
+            "what": "VP of Sales",
+            "where": "Texas"
+          },
+          {
+            "what": "Head of Sales",
+            "where": "Austin"
+          },
+          {
+            "what": "Account Executive SaaS",
+            "where": "Austin"
+          },
+          {
+            "what": "Sales Manager IT services",
+            "where": "Colorado"
+          },
+          {
+            "what": "Director of Sales",
+            "where": "Arizona"
+          }
+        ]
+      },
+      "apollo": {
+        "enabled": true,
+        "rotate_pages": 4,
+        "locations": [
+          "Texas, United States",
+          "Colorado, United States",
+          "Arizona, United States"
+        ],
+        "sales_titles": [
+          "account executive",
+          "sales manager",
+          "head of sales",
+          "vp of sales",
+          "director of sales",
+          "business development",
+          "sales development representative"
+        ],
+        "queries": [
+          {
+            "vertical": "SaaS",
+            "label": "saas_hiring",
+            "signals": [
+              "hiring_sales_role"
+            ],
+            "keywords": [
+              "saas",
+              "b2b software"
+            ],
+            "employee_ranges": [
+              "1,10",
+              "11,50"
+            ],
+            "job_titles": "sales_titles",
+            "job_posted_days": 60
+          },
+          {
+            "vertical": "SaaS",
+            "label": "saas_funded",
+            "signals": [
+              "recent_funding"
+            ],
+            "keywords": [
+              "saas",
+              "b2b software"
+            ],
+            "employee_ranges": [
+              "1,10",
+              "11,50"
+            ],
+            "funding_days": 365
+          },
+          {
+            "vertical": "IT services",
+            "label": "it_hiring",
+            "signals": [
+              "hiring_sales_role"
+            ],
+            "keywords": [
+              "managed services",
+              "managed service provider",
+              "it services"
+            ],
+            "employee_ranges": [
+              "1,10",
+              "11,50"
+            ],
+            "job_titles": "sales_titles",
+            "job_posted_days": 60
+          },
+          {
+            "vertical": "Professional services",
+            "label": "profserv_hiring",
+            "signals": [
+              "hiring_sales_role"
+            ],
+            "keywords": [
+              "management consulting",
+              "consulting",
+              "accounting",
+              "legal services",
+              "wealth management"
+            ],
+            "employee_ranges": [
+              "1,10",
+              "11,50"
+            ],
+            "job_titles": [
+              "business development",
+              "sales",
+              "account executive",
+              "client development"
+            ],
+            "job_posted_days": 90
+          }
+        ]
+      },
+      "news": {
+        "enabled": true,
+        "location_label": "US (news)",
+        "based_prefixes": [
+          "texas",
+          "austin",
+          "colorado",
+          "arizona"
+        ],
+        "queries": [
+          "Austin startup raises seed OR \"Series A\" software when:30d",
+          "Texas OR Colorado \"managed service provider\" OR consulting OR \"professional services\" raises OR acquires OR expands when:30d"
+        ]
+      }
+    },
+    "blocklists": {
+      "whole_word": [
+        "sandler",
+        "gong",
+        "clari",
+        "chorus",
+        "outreach",
+        "salesloft"
+      ],
+      "substring": [
+        "winning by design",
+        "force management",
+        "sales enablement",
+        "sales training",
+        "sales coaching",
+        "fractional cro",
+        "fractional cso",
+        "revops consulting",
+        "recruit",
+        "staffing",
+        "talent acquisition",
+        "headhunt",
+        "executive search",
+        "michael page",
+        "robert half",
+        "korn ferry"
+      ],
+      "big_corp": [
+        "salesforce",
+        "microsoft",
+        "oracle",
+        "google",
+        "amazon",
+        "meta",
+        "workday",
+        "servicenow",
+        "adobe",
+        "sap",
+        "ibm",
+        "staples",
+        "uber",
+        "honeywell",
+        "medtronic",
+        "merck",
+        "labcorp",
+        "pwc",
+        "metlife",
+        "equifax",
+        "marriott",
+        "deloitte",
+        "accenture",
+        "kpmg",
+        "cvs",
+        "cognizant",
+        "stripe",
+        "aetna",
+        "wipro",
+        "infosys",
+        "tcs",
+        "capgemini",
+        "ey",
+        "pepsico",
+        "nestle",
+        "kroger",
+        "walgreens"
+      ]
+    },
+    "icp": {
+      "prompt": "You evaluate B2B leads for a services consultancy that helps founder-led companies build a repeatable sales process (ICP, playbooks, pricing, CRM, pipeline). Decide whether this company is a good prospect and return an integer score from 1 to 12.\n\nICP: United States; 1-30 employees (up to 50 with a strong signal); revenue between 500K and 5M or clear potential; founder-led, with no COO, RevOps or Sales Ops in place; verticals: B2B services and consulting, SaaS, IT services and MSPs, professional services (legal, accounting, wealth management).\n\n\"WHY NOW\" SIGNALS (positive, strongest first): 1) a posted VP/Head of Sales or first AE/SDR vacancy (strongest); 2) a first sales leader hired less than 6 months ago; 3) a recent seed or Series A round; 4) an OPEN Sales Ops/RevOps vacancy in a company under 50 people (ambiguous); 5) a fragmented stack (spreadsheets plus a CRM); 6) physical or market expansion; 7) a founder complaining about follow-ups or CRM; 8) funding in the last 12 months; 9) a sales vacancy open for more than 30 days or repeated sales hiring (the founder already tried and it did not stick); 10) news about expansion, a new location or an acquisition.\n\nHARD RULES (score 1-4): the company ALREADY has someone in a RevOps/Sales Ops/Director of Operations seat (a person in the role, not an open vacancy); a mature integrated sales stack; more than 200 employees or a nationally known corporation (score 1-2 ALWAYS, whatever the role; when unsure whether a company is large and well known, assume it is and lower the score); a direct competitor (growth or RevOps consultancy, fractional CRO/CSO, sales enablement or training); procurement or buying-committee processes.\n\nCONSISTENCY: the score cannot be 8 or higher unless \"why\" cites a concrete signal from the list, not a generic phrase.\nDO NOT INVENT: use only the information provided.\nIf there is no sales vacancy (empty role) but the firmographics fit, it is a weaker lead: maximum score 6 unless the description shows another concrete signal.",
+      "signal_weights": {
+        "hiring_sales_role": 3,
+        "hiring_sales_manager": 3,
+        "recent_funding": 3,
+        "founder_closing": 3,
+        "stale_vacancy": 2,
+        "repeat_sales_hiring": 2,
+        "expansion": 2,
+        "referral_dependent": 2,
+        "no_sales_function": 2,
+        "new_sales_leader": 1,
+        "acquisition": 1,
+        "crm_spreadsheets": 1
+      },
+      "home_region_regex": "texas|austin|,\\s*tx\\b",
+      "revenue_ideal": [
+        500000,
+        5000000
+      ],
+      "employees_ok": [
+        3,
+        30
+      ],
+      "founder_led_max_employees": 15
+    },
+    "limits": {
+      "llm_cap": 25,
+      "resolve_cap": 10,
+      "min_score": 6,
+      "max_employees": 100
+    }
+  },
+  "outreach": {
+    "contact": {
+      "provider": "apollo",
+      "min_conf_dm": 60,
+      "min_conf_senior": 80,
+      "generic_prefixes": [
+        "info",
+        "support",
+        "sales",
+        "contact",
+        "hello",
+        "admin",
+        "careers",
+        "hr",
+        "help",
+        "office",
+        "team",
+        "jobs",
+        "recruiting",
+        "noreply",
+        "no-reply",
+        "press",
+        "media",
+        "billing",
+        "accounts",
+        "informacion",
+        "ventas",
+        "contacto",
+        "hola",
+        "administracion",
+        "soporte"
+      ],
+      "titles": [
+        "Founder",
+        "Co-Founder",
+        "Owner",
+        "CEO",
+        "Chief Executive Officer",
+        "President",
+        "Managing Partner",
+        "Principal",
+        "General Manager"
+      ]
+    },
+    "offer": {
+      "email_prompt": "You are {sender_name}, {sender_title} at {sender_company}. {sender_company} is a B2B services consultancy that helps founder-led companies (SaaS, IT services, professional services) build a repeatable sales process: ideal customer profile, playbooks, pricing, CRM and pipeline, with AI only where it removes friction, so growth stops depending on the founder closing every deal. Write a short cold outreach email to {name} ({title}) at {company}. Concrete context you researched about this company, use it as the hook of the first line: {why}. Role they are hiring for (may be empty): {role}. Extra details (may be empty): {details}. If that context is specific (a sales role they posted, a concrete signal), cite it as is without inventing data. If the context is weak, be brief and direct instead of forcing a fake hook. It is FORBIDDEN to use generic filler such as \"recent growth\", \"growing team\", \"scaling fast\" or \"impressed by your work\" without a concrete fact behind it. Naturally, and not as the main hook, mention that a defined sales process means a new sales hire lands on a real pipeline instead of inheriting chaos. Close with a concrete, low-commitment ask (a short 15-minute call this week), never a vague \"let me know how I can help\". Professional, warm, not pushy. Maximum 120 words, no clickbait subject.\nSign as:\n{signature}\nIMPORTANT: the whole email, subject and body, must be written in English. Respond ONLY with a valid JSON object with two fields: subject (short, direct, no emojis) and body (plain text, line breaks as \\n). No other text, no markdown, no code blocks.",
+      "linkedin_prompt": "You are {sender_name} at {sender_company}, a B2B services consultancy that helps founder-led companies build a repeatable sales process. Write a short LinkedIn message (under 300 characters) to {name_or_role} at {company}, as a first-touch connection note. Context you researched: {why}. Structure: a brief hook on the concrete signal above if it exists (if it is weak, a short non-generic hook about the type of company, no invented data), one line on what {sender_company} does, and ONE low-commitment closing question (for example whether a quick 15-minute chat makes sense). Never more than one question. Warm, professional, in English, no emojis, no hashtags. Respond ONLY with a valid JSON object with one field: message (the LinkedIn message text). No other text, no markdown, no code blocks."
+    },
+    "send": {
+      "mode": "review",
+      "min_score": 6,
+      "default_score": 0,
+      "daily_cap": 2,
+      "min_words": 25,
+      "max_words": 170,
+      "banned_phrases": [
+        "recent growth",
+        "growing team",
+        "scaling fast",
+        "rapid growth",
+        "impressed by your work",
+        "company culture",
+        "expanding team",
+        "continued growth"
+      ],
+      "signature_must_include": "Your Company",
+      "optout_line": "P.S. If this is not relevant, just reply \"no\" and I will not follow up."
+    }
+  },
+  "replies": {
+    "own_emails": [
+      "you@example.com"
+    ],
+    "free_domains": [
+      "gmail.com",
+      "hotmail.com",
+      "outlook.com",
+      "yahoo.com",
+      "icloud.com",
+      "live.com",
+      "proton.me",
+      "protonmail.com"
+    ],
+    "classify_prompt": "You classify replies to B2B cold emails sent by {sender_company}. Here is the text of a real reply from a prospect: \"{reply}\". Decide whether it shows genuine interest (asks for information, proposes a call, says they are interested, asks a related question) or NOT (says no, unsubscribe request, out-of-office or other automatic reply, bounce, unrelated). Respond ONLY with a valid JSON object with two fields: interested (true or false) and reason (one short sentence). No other text."
+  },
+  "followup": {
+    "after_business_days": 3,
+    "prompt": "You are {sender_name} at {sender_company}, a B2B services consultancy that helps founder-led companies build a repeatable sales process. A few days ago you emailed {name} ({title}) at {company}. Original context: {why}. Role they are hiring for (may be empty): {role}. They have not replied. Write a VERY short follow-up (maximum 50 words) that picks up the previous thread without repeating the whole pitch, light and warm, not pushy. Close with a concrete low-commitment question (for example whether a quick call this week makes sense, or offering to share a relevant example). Sign as:\n{signature}\nIMPORTANT: fully in English, subject and body. Respond ONLY with a valid JSON object with two fields: subject (short, may start with 'Re: ') and body (plain text, line breaks as \\n). No other text, no markdown, no code blocks."
+  },
+  "report": {
+    "report_title": "Lead gen weekly report"
+  }
+}
