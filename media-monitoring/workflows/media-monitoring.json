@@ -1,0 +1,946 @@
+{
+  "name": "Media monitoring (open sources + local AI)",
+  "nodes": [
+    {
+      "id": "126f9821-12db-5684-96bb-a29df47ff4da",
+      "name": "Nota: qué hace",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -640,
+        -200
+      ],
+      "parameters": {
+        "content": "## Monitoreo de medios automático\n\nArma el informe **\"Monitoreo de medios\"** de los cortes de las **10:00 y 16:00** con noticias reales y te lo manda a revisión, con cada nota, su link y botones para corregir a la IA.\n\n**Ritmos**\n- **Cada hora (:07):** recolecta y guarda notas en el servicio local (los RSS de los medios traen solo las últimas horas). No manda mails.\n- **9:45 y 15:45, de lunes a viernes:** arma el informe. La recolección sigue el fin de semana y el AM del lunes cubre desde el viernes 15:45.\n\n**Ventanas sin huecos:** AM = 15:45 del día hábil anterior a 9:45. PM = 9:45 a 15:45.\n\n**Pasos:** fuentes configurables → filtro por palabras clave → duplicados → IA clasifica (relevancia, tema, sentiment, motivo) → IA agrupa en historias → IA redacta una tarjeta por historia (sin inventar) → pptx → mail de revisión → ping a healthchecks.\n\n**Calidad medida:** cada click de corrección en el mail queda registrado. El mail muestra la precisión acumulada de relevancia y sentiment.\n\n**Nada falla en silencio:** fallas → mail + healthchecks /fail. Si n8n o la Mac ni siquiera corren, healthchecks.io avisa por falta de ping.\n\nNada sale al cliente sin revisión humana.",
+        "width": 420,
+        "height": 700,
+        "color": 7
+      }
+    },
+    {
+      "id": "83de4f11-83da-5e1d-8832-139f4f823769",
+      "name": "Nota: límites",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -640,
+        540
+      ],
+      "parameters": {
+        "content": "### Límites (a la vista)\n- Solo medios web: Google News, Bing News y RSS de 10 medios. Sin redes sociales.\n- Sin alcance (\"s/d\"): las fuentes abiertas no lo informan.\n- Para equiparar a Meltwater: reemplazar \"Buscar en fuentes\" por su export o API; el resto del flujo no cambia.",
+        "width": 420,
+        "height": 240,
+        "color": 3
+      }
+    },
+    {
+      "id": "f2606607-7927-54a2-b96f-c36bc910475b",
+      "name": "Nota: configuración",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        160,
+        -260
+      ],
+      "parameters": {
+        "content": "### Configuración\nTodo (cliente, búsquedas, medios, palabras clave, servidor, token, healthchecks) está en un solo nodo: **Config**. Lo usan el informe y el webhook de correcciones. El modelo de IA se cambia en los 3 nodos **Modelo IA**.",
+        "width": 340,
+        "height": 160,
+        "color": 4
+      }
+    },
+    {
+      "id": "a28d873a-c310-577f-9fe6-5aaab743fb40",
+      "name": "Cada hora: recolectar",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "7 * * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "21f0ae68-b8df-561c-a0b9-430789ac42c1",
+      "name": "Corte 9:45 y 15:45",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "45 9,15 * * 1-5"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "9f412004-3fbe-557b-8410-7da55ec22d1a",
+      "name": "Probar a mano",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        500
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "18ed6815-0b10-5f9c-b82e-8d8499d048dd",
+      "name": "Modo recolectar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: { modo: 'recolectar' } }];\n"
+      }
+    },
+    {
+      "id": "b2b241a1-f349-5008-921e-bcc17d764062",
+      "name": "Modo informe",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: { modo: 'informe' } }];\n"
+      }
+    },
+    {
+      "id": "48714b62-7d11-57bb-a507-92d054d31ca1",
+      "name": "Modo prueba",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        500
+      ],
+      "parameters": {
+        "jsCode": "// Para probar a mano: '' elige el corte según la hora; 'AM' arma el de las 10:00 de hoy; 'PM' el de las 16:00 de hoy.\nconst FORZAR_TURNO = '';\nreturn [{ json: { modo: 'informe', prueba: true, forzar_turno: FORZAR_TURNO } }];\n"
+      }
+    },
+    {
+      "id": "c0385e08-48e0-5380-aa99-35a5f4078fdf",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// ======================= CONFIGURACION ÚNICA =======================\n// Todo lo que se ajusta del monitoreo está acá. Los demás nodos lo leen de este nodo.\n// (El modelo de IA es lo único que se cambia aparte, en los 3 nodos \"Modelo IA\".)\n// El cliente de este archivo es FICTICIO: reemplazá cliente, descripción, reglas, ejemplos y búsquedas por los de tu cliente.\nconst CONFIG = {\n  cliente: 'Ejemplo S.A.',\n  cliente_corto: 'EJ',\n  descripcion: 'Es una empresa de servicios con sedes y plantas en varias provincias. En los medios también aparece como \"Grupo Ejemplo\".',\n  alias_regex: 'ejemplo s\\\\.?a\\\\.?|grupo ejemplo',          // cómo se nombra a la empresa en un titular\n  servidor: 'http://host.docker.internal:8787',             // servicio local (pptx + notas guardadas)\n  token: 'YOUR_SERVICE_TOKEN',                              // igual al token.txt del servicio\n  ping: 'https://hc-ping.com/YOUR_CHECK_UUID',               // healthchecks.io\n  feedback_url: 'https://YOUR_N8N_HOST/webhook/media-feedback', // links de corrección del mail\n  // Palabras que tiene que tener el titular o la bajada para pasar a la IA\n  palabras_clave: 'ejemplo s\\\\.?a\\\\.?|grupo ejemplo',\n  // Qué cuenta como relevante para este cliente (va dentro del prompt de clasificación)\n  reglas_relevancia: 'true si la nota trata sobre la empresa, sus sedes, obras, servicios, precios, seguridad o conflictos, o sobre algo que pasa en sus instalaciones y afecta a sus clientes. También true si nombra a la empresa aunque el hecho no ocurra en sus instalaciones (es reputación). false si la empresa aparece solo de pasada, si es otra empresa con un nombre parecido o un tema sin relación.',\n  // Ejemplos para la IA: titular -> clasificación esperada\n  ejemplos: [\n    '\"Ejemplo S.A. invertirá US$10 millones en una nueva planta en el norte del país\" -> {\"relevante\": true, \"tema\": \"infraestructura\", \"sentimiento\": \"positivo\", \"motivo\": \"anuncio de inversión de la empresa\"}',\n    '\"Paro en la planta de Ejemplo S.A.: qué servicios se ven afectados\" -> {\"relevante\": true, \"tema\": \"operacion\", \"sentimiento\": \"negativo\", \"motivo\": \"conflicto gremial que afecta el servicio\"}',\n    '\"Grupo Ejemplo suma clientes y marca un récord en el semestre\" -> {\"relevante\": true, \"tema\": \"demanda\", \"sentimiento\": \"positivo\", \"motivo\": \"crecimiento de clientes de la empresa\"}',\n    '\"Cuánto pueden subir las acciones de los bancos este mes\" -> {\"relevante\": false, \"tema\": \"otros\", \"sentimiento\": \"neutral\", \"motivo\": \"nota financiera sin relación con el cliente\"}',\n    '\"Un actor fue visto almorzando cerca de una sede de Ejemplo S.A.\" -> {\"relevante\": false, \"tema\": \"otros\", \"sentimiento\": \"neutral\", \"motivo\": \"la empresa aparece de pasada\"}'\n  ],\n  // Palabras del rubro que no sirven para distinguir una historia de otra\n  genericos: 'ejemplo grupo empresa planta sede',\n  // Búsquedas en agregadores\n  google: ['\"Ejemplo S.A.\"', '\"Grupo Ejemplo\"', '\"Ejemplo S.A.\" inversión', '\"Ejemplo S.A.\" conflicto'],\n  bing: ['\"Ejemplo S.A.\"', '\"Grupo Ejemplo\"'],\n  // RSS directos de medios (traen solo las últimas horas: por eso se recolecta cada hora)\n  medios: {\n    'Infobae': 'https://www.infobae.com/arc/outboundfeeds/rss/?outputType=xml',\n    'La Nación': 'https://www.lanacion.com.ar/arc/outboundfeeds/rss/?outputType=xml',\n    'Clarín': 'https://www.clarin.com/rss/lo-ultimo/',\n    'Ámbito': 'https://www.ambito.com/rss/pages/home.xml',\n    'Perfil': 'https://www.perfil.com/feed',\n    'El Cronista': 'https://www.cronista.com/arc/outboundfeeds/rss/?outputType=xml',\n    'TN': 'https://tn.com.ar/arc/outboundfeeds/rss/?outputType=xml',\n    'MDZ Online': 'https://www.mdzol.com/rss/pages/home.xml',\n    'Minuto Uno': 'https://www.minutouno.com/rss/pages/home.xml',\n    'La Capital': 'https://www.lacapital.com.ar/rss/pages/home.xml'\n  }\n};\n// ===================================================================\nreturn $input.all().map(i => ({ json: Object.assign({}, i.json, { cfg: CONFIG }) }));\n"
+      }
+    },
+    {
+      "id": "8c3f2011-c1c0-5a9f-b6b4-a903ddd3c20e",
+      "name": "Fuentes y ventana",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Calcula la ventana del corte y arma una consulta por fuente.\n// Ventanas sin huecos: AM = 15:45 del día hábil anterior a 9:45; PM = 9:45 a 15:45 (el flujo corre a esas horas, de lunes a viernes).\nconst entrada = $input.first().json;\nif (!entrada.modo) return []; // vino del webhook de correcciones: no es para este camino\nconst CONFIG = entrada.cfg;\nconst modo = entrada.modo || 'informe';\nconst MESES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];\nconst H = 3 * 3600 * 1000; // Argentina: UTC-3 todo el año\nconst ahora = new Date().getTime();\nconst loc = new Date(ahora - H);\nconst y = loc.getUTCFullYear(), m = loc.getUTCMonth(), d = loc.getUTCDate();\nconst at = (dia, hora, min) => Date.UTC(y, m, dia, hora, min, 0) + H;\nconst minutos = loc.getUTCHours() * 60 + loc.getUTCMinutes();\nlet turno = entrada.forzar_turno === 'AM' || entrada.forzar_turno === 'PM' ? entrada.forzar_turno : (minutos < 12 * 60 ? 'AM' : 'PM');\nlet corte, desde, hasta;\n// Informes solo de lunes a viernes: el AM del lunes cubre desde el viernes a las 15:45 (todo el fin de semana).\nconst esLunes = loc.getUTCDay() === 1;\nif (turno === 'AM') { corte = '10:00'; desde = at(d - (esLunes ? 3 : 1), 15, 45); hasta = at(d, 9, 45); }\nelse { corte = '16:00'; desde = at(d, 9, 45); hasta = at(d, 15, 45); }\nconst lunesAM = esLunes && turno === 'AM';\nconst base = { lunesAM, modo, prueba: !!entrada.prueba, cfg: CONFIG, cliente: CONFIG.cliente, cliente_corto: CONFIG.cliente_corto, turno, corte, desde, hasta, ahora,\n  fecha: d + ' de ' + MESES[m] + ' de ' + y };\nconst fuentes = [];\nfor (const q of CONFIG.google) fuentes.push({ fuente: 'Google News: ' + q, tipo: 'google', medio_fijo: '',\n  url: 'https://news.google.com/rss/search?q=' + encodeURIComponent(q + (lunesAM ? ' when:4d' : ' when:2d')) + '&hl=es-419&gl=AR&ceid=AR:es-419' });\nfor (const q of CONFIG.bing) fuentes.push({ fuente: 'Bing News: ' + q, tipo: 'bing', medio_fijo: '',\n  url: 'https://www.bing.com/news/search?q=' + encodeURIComponent(q) + '&format=rss&setlang=es-AR&cc=AR&qft=sortbydate%3d%221%22' });\nfor (const [nombre, url] of Object.entries(CONFIG.medios)) fuentes.push({ fuente: nombre, tipo: 'medio', medio_fijo: nombre, url });\nreturn fuentes.map(f => ({ json: Object.assign({}, base, f) }));\n"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "92ea31b3-408b-5c04-90ed-bb83b1626679",
+      "name": "Buscar en fuentes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        300
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text",
+              "outputPropertyName": "xml"
+            }
+          },
+          "timeout": 20000
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "cefc61fd-3e9c-5c3a-8bf8-1c0e12c9c540",
+      "name": "Unir, filtrar y guardar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Lee todas las fuentes, normaliza, filtra por palabras clave, guarda en el servicio local y arma la lista del corte.\nconst http = (typeof $helpers !== 'undefined' && $helpers.httpRequest) ? $helpers : this.helpers;\nconst fuentes = $('Fuentes y ventana').all().map(x => x.json);\nconst info = fuentes[0];\nconst SERVIDOR = info.cfg.servidor;\nconst AUTH = { 'X-Token': info.cfg.token };\nconst CLAVE = new RegExp(info.cfg.palabras_clave, 'i');\nconst recolectando = info.modo === 'recolectar';\n// En la recolección horaria un problema no manda mail: lo detecta el informe siguiente.\nconst falla = msg => { if (recolectando) return null; throw new Error(msg); };\nconst dec = s => s.replace(/<!\\[CDATA\\[|\\]\\]>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '\"')\n  .replace(/&#x27;|&#39;|&apos;/g, \"'\").replace(/&#(\\d+);/g, (_, n) => String.fromCharCode(+n)).replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&');\nconst limpiar = s => dec(dec(s)).replace(/<[^>]+>/g, ' ').replace(/\\s+/g, ' ').trim();\nconst norm = s => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();\nconst hhmm = t => { const x = new Date(t - 3 * 3600 * 1000); return String(x.getUTCHours()).padStart(2, '0') + ':' + String(x.getUTCMinutes()).padStart(2, '0'); };\n// Hora de la nota; si es de otro día que el corte (ej. el lunes, notas del fin de semana), con el día adelante: \"sáb 14:30\"\nconst DIAS = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];\nconst diaAR = t => new Date(t - 3 * 3600 * 1000).toISOString().slice(0, 10);\nconst cuando = t => (diaAR(t) === diaAR(info.hasta - 1) ? '' : DIAS[new Date(t - 3 * 3600 * 1000).getUTCDay()] + ' ') + hhmm(t);\nconst ok = [], fallidas = [];\nlet leidas = 0, porPalabra = 0;\nconst frescas = [];\n$input.all().forEach((it, i) => {\n  const f = fuentes[i];\n  const xml = it.json.xml;\n  if (typeof xml !== 'string' || !/<item[\\s>]/.test(xml)) { fallidas.push(f.fuente); return; }\n  ok.push(f.fuente);\n  for (const raw of (xml.match(/<item[\\s>][\\s\\S]*?<\\/item>/g) || [])) {\n    leidas++;\n    const get = tag => { const mm = raw.match(new RegExp('<' + tag + '(?:\\\\s[^>]*)?>([\\\\s\\\\S]*?)</' + tag + '>')); return mm ? limpiar(mm[1]) : ''; };\n    let titulo = get('title');\n    let medio = f.medio_fijo || get('source') || get('News:Source');\n    let link = get('link');\n    const t = Date.parse(get('pubDate') || get('dc:date'));\n    const desc = get('description').slice(0, 300);\n    if (f.tipo === 'bing') { const u = link.match(/[?&]url=([^&]+)/); if (u) link = decodeURIComponent(u[1]); }\n    if (!medio) { const k = titulo.lastIndexOf(' - '); if (k > 0) medio = titulo.slice(k + 3); }\n    if (medio && titulo.endsWith(' - ' + medio)) titulo = titulo.slice(0, -(medio.length + 3));\n    if (medio && medio.length > 25 && medio.indexOf(' - ') > 2) medio = medio.slice(0, medio.indexOf(' - ')); // \"Infobae - Últimas noticias\" -> \"Infobae\"\n    if (!titulo || !t || t < Math.min(info.ahora - 48 * 3600e3, info.desde - 6 * 3600e3) || t > info.ahora + 3600e3) continue; // el lunes la ventana abarca el fin de semana\n    const descUtil = f.tipo === 'google' || norm(desc) === norm(titulo) ? '' : desc;\n    if (!CLAVE.test(titulo + ' ' + descUtil)) { porPalabra++; continue; }\n    frescas.push({ clave: norm(titulo).slice(0, 90) + '|' + norm(medio || 'sin medio'), titulo, medio: medio || 'Sin medio', link, t, desc: descUtil, via: f.tipo });\n  }\n});\nif (ok.length === 0) { falla('Ninguna fuente respondió (' + fallidas.length + ' fallidas). ¿Hay internet en la Mac?'); return []; }\nlet guardado;\ntry { guardado = await http.httpRequest({ method: 'POST', url: SERVIDOR + '/notas', headers: AUTH, body: { notas: frescas }, json: true }); }\ncatch (e) { falla('No pude guardar en el servicio local. ¿Está corriendo? Probá: curl localhost:8787/health. Detalle: ' + e.message); return []; }\nif (recolectando) return [];\nlet guardadas = [], usadas = new Set(), usadasNotas = [];\ntry { const r = await http.httpRequest({ method: 'GET', url: SERVIDOR + '/notas?desde=' + info.desde + '&hasta=' + info.hasta + '&tardias=1&corte=' + encodeURIComponent(info.fecha + '|' + info.corte), headers: AUTH, json: true }); const rr = typeof r === 'string' ? JSON.parse(r) : r; guardadas = rr.notas || []; usadas = new Set(rr.usadas || []); usadasNotas = rr.usadas_notas || []; }\ncatch (e) { throw new Error('No pude leer las notas guardadas del servicio local: ' + e.message); }\nconst porClave = new Map();\nfor (const n of guardadas.concat(frescas)) {\n  if (usadas.has(n.clave)) continue; // ya se consideró en otro corte: no se cuenta dos veces\n  if (!n.tarde && (n.t < info.desde || n.t >= info.hasta)) continue; // ventana [desde, hasta) // las \"tarde\" son del borde del corte anterior, indexadas después\n  const prev = porClave.get(n.clave);\n  // Si la misma nota vino por un agregador y por el RSS del medio, me quedo con el link directo\n  if (!prev || (prev.via !== 'medio' && n.via === 'medio')) porClave.set(n.clave, Object.assign({}, prev || {}, n));\n}\n// Segunda pasada de duplicados: mismo link, o título casi igual en el mismo medio (otra fuente lo trajo cortado o retocado)\nconst toks = t => new Set(norm(t).split(' ').filter(w => w.length > 2));\nconst compacto = m => norm(m).replace(/ /g, '');\nconst mismoMedio = (a, b) => { const x = compacto(a), y = compacto(b); return x === y || (x.length > 3 && y.length > 3 && (x.startsWith(y) || y.startsWith(x))); };\n// Mismo título si el corto está entero dentro del largo (cortado o con algo agregado), o si en títulos largos coincide el 80% de las palabras.\n// En títulos cortos del mismo medio no alcanza el 80%: \"Demoras por lluvia en la planta norte\" y \"Demoras por gremios en la planta norte\" son notas distintas.\nconst parecidos = (a, b) => { const A = toks(a), B = toks(b); let c = 0; for (const w of A) if (B.has(w)) c++; const min = Math.min(A.size, B.size); return (min >= 4 && c === min) || (min >= 8 && c / min >= 0.8); };\nconst esDup = (u, n) => (u.link && n.link && u.link === n.link) || (mismoMedio(u.medio, n.medio) && Math.abs(u.t - n.t) <= 3 * 3600e3 && parecidos(u.titulo, n.titulo));\nconst unicas = [];\nlet duplicadas = 0, yaContadas = 0;\nfor (const n of [...porClave.values()].sort((a, b) => (a.via === 'medio' ? 0 : 1) - (b.via === 'medio' ? 0 : 1) || a.t - b.t)) {\n  if (usadasNotas.some(u => esDup(u, n))) { yaContadas++; continue; } // la misma nota ya se contó en otro corte, traída por otra fuente\n  const dup = unicas.find(u => esDup(u, n));\n  if (dup) { duplicadas++; continue; }\n  unicas.push(n);\n}\nlet notas = unicas.sort((a, b) => b.t - a.t);\nconst TOPE = info.lunesAM ? 150 : 60; // el lunes junta todo el fin de semana\nconst recortadas = Math.max(0, notas.length - TOPE);\nnotas = notas.slice(0, TOPE);\nif (notas.length === 0) throw new Error('AVISO: no hubo menciones que pasen el filtro entre las ' + hhmm(info.desde) + ' y las ' + hhmm(info.hasta) + ' (' + leidas + ' notas leídas en ' + ok.length + ' fuentes). No se generó informe.');\nconst stats = { tardias: notas.filter(n => n.tarde).length, fuentes_ok: ok, fuentes_fallidas: fallidas, leidas, por_palabra: porPalabra, duplicadas, ya_contadas: yaContadas, en_ventana: notas.length, recortadas, guardadas_total: guardado && guardado.total };\nreturn notas.map((n, i) => ({ json: Object.assign({ id: i, hora: cuando(n.t), stats: i === 0 ? stats : undefined }, n, {\n  prompt:\n`Sos analista senior de monitoreo de medios de una agencia de comunicación. Tu cliente: ${info.cfg.cliente}\n${info.cfg.descripcion}\n\nClasificá esta nota:\nMedio: ${n.medio}\nTitular: ${n.titulo}\nBajada: ${n.desc || '(sin bajada)'}\n\nReglas:\n- \"relevante\": ${info.cfg.reglas_relevancia}\n- \"tema\": \"infraestructura\" (obras, inversiones, nuevas sedes o plantas, financiamiento, deuda), \"demanda\" (clientes, ventas, precios de mercado, récords, nuevos servicios), \"operacion\" (demoras, interrupciones, cierres, servicios, tarifas, seguridad, conflictos gremiales), \"institucional\" (comunicados, aclaraciones o acciones de la empresa fuera de la operación diaria, polémicas sobre su reputación) u \"otros\".\n- \"sentimiento\": cómo deja parada la nota a la empresa. \"positivo\" (logros, inversiones, mejoras), \"negativo\" (problemas, quejas, conflictos, demoras, críticas), \"neutral\" (informativo).\n- \"motivo\": hasta 12 palabras que expliquen tu decisión.\n\nEjemplos:\n${info.cfg.ejemplos.join('\\n')}\n\nRespondé SOLO con el JSON, con las claves relevante, tema, sentimiento y motivo.`\n}) }));\n"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "de9d5598-5304-5050-b98e-e01902758397",
+      "name": "Clasificar notas (IA)",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        1340,
+        300
+      ],
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.prompt }}",
+        "options": {
+          "systemMessage": "Sos un analista de monitoreo de medios preciso. Respondé siempre y solo con un objeto JSON válido, sin texto antes ni después y sin bloques de código."
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "1a9ab1a4-a7e8-5c58-85e7-9af25eff516e",
+      "name": "Modelo IA (clasificar)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [
+        1360,
+        520
+      ],
+      "parameters": {
+        "model": "qwen2.5:14b",
+        "options": {
+          "temperature": 0,
+          "numCtx": 8192
+        }
+      },
+      "credentials": {
+        "ollamaApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Ollama Local"
+        }
+      }
+    },
+    {
+      "id": "5413ac6f-6d92-5edc-acd8-df91efc3dace",
+      "name": "Preparar historias",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1600,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const CFG = $('Fuentes y ventana').first().json.cfg;\n// Lee la clasificacion de la IA, separa relevantes y descartadas y arma el pedido para agrupar en historias.\nconst notas = $('Unir, filtrar y guardar').all().map(x => x.json);\nconst res = $input.all();\nconst leer = r => { const s = String((r && r.json && (r.json.output ?? r.json.text ?? r.json.response)) ?? ''); const m = s.match(/\\{[\\s\\S]*\\}/); return JSON.parse(m ? m[0] : s); };\nconst TEMAS = ['infraestructura', 'demanda', 'operacion', 'institucional', 'otros'];\nconst SENT = ['positivo', 'neutral', 'negativo'];\nconst sinAcento = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();\nconst EMPRESA = new RegExp(CFG.alias_regex, 'i');\nconst rel = [], descartadas = [], sinClasificar = [];\nnotas.forEach((n, i) => {\n  let c = null;\n  try {\n    const o = leer(res[i]);\n    const r = o.relevante === true || o.relevante === 'true' ? true : o.relevante === false || o.relevante === 'false' ? false : null;\n    const s = sinAcento(o.sentimiento), t = sinAcento(o.tema);\n    if (r !== null && (SENT.includes(s) || r === false)) c = { r, r_ia: r, tema: TEMAS.includes(t) ? t : 'otros', sent: SENT.includes(s) ? s : 'neutral', motivo: String(o.motivo || '').slice(0, 120) };\n  } catch (e) {}\n  const base = { clave: n.clave, tarde: !!n.tarde, titulo: n.titulo, medio: n.medio, hora: n.hora, t: n.t, link: n.link, desc: n.desc, via: n.via };\n  // Regla fija: si el titular nombra a la empresa, es relevante aunque la IA diga que no (es reputación del cliente)\n  if (c && !c.r && EMPRESA.test(n.titulo)) { c.r = true; c.motivo = 'nombra a la empresa (regla fija; la IA la había descartado: ' + c.motivo + ')'; }\n  if (!c) sinClasificar.push(base);\n  else if (!c.r) descartadas.push(Object.assign(base, { motivo: c.motivo, rel_ia: false }));\n  else rel.push(Object.assign(base, { tema: c.tema, sent: c.sent, motivo: c.motivo, rel_ia: c.r_ia, regla: c.r !== c.r_ia }));\n});\nif (sinClasificar.length > notas.length * 0.3) throw new Error('La IA no pudo clasificar ' + sinClasificar.length + ' de ' + notas.length + ' notas. Revisá que Ollama esté corriendo y que el modelo del nodo \"Modelo IA\" esté descargado.');\nif (rel.length === 0 && descartadas.length >= 10) throw new Error('La IA descartó las ' + descartadas.length + ' notas del corte. Puede ser normal, pero es más probable que el modelo o el prompt estén fallando: revisá una de las descartadas. Ejemplos: ' + descartadas.slice(0, 5).map(d => d.titulo + ' (' + d.motivo + ')').join('; '));\nif (rel.length === 0) throw new Error('AVISO: ninguna de las ' + notas.length + ' notas del corte resultó relevante para el cliente. Descartadas: ' + descartadas.map(d => d.titulo + ' (' + d.medio + ')').slice(0, 10).join('; '));\nrel.sort((a, b) => b.t - a.t);\nconst lista = rel.slice(0, 40).map((r, i) => '[' + i + '] ' + r.titulo + ' [medio: ' + r.medio + ']' + (r.desc ? ': ' + r.desc.slice(0, 120) : '')).join('\\n');\nconst ctx = { rel, descartadas, sinClasificar, stats: notas[0].stats };\nreturn [{ json: { ctx, prompt:\n`Sos analista de monitoreo de medios. Estas son las notas del corte sobre ${CFG.cliente}, numeradas:\n\n${lista}\n\nAgrupá en una misma historia las notas que cuentan el MISMO hecho, aunque lo cuenten desde ángulos distintos. Ejemplos: un paro en una planta, los servicios afectados por ese paro y la respuesta de la empresa son UNA historia; el anuncio de una emisión de deuda y las notas que la analizan son UNA historia; una inversión en una provincia y una queja de clientes en otra son historias SEPARADAS. Cada número va en una sola historia. Una nota sola puede ser su propia historia.\n\nRespondé SOLO con un JSON así: {\"historias\": [{\"nombre\": \"hecho en pocas palabras\", \"ids\": [0, 3]}, {\"nombre\": \"...\", \"ids\": [1]}]}` } }];\n"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "736b9c62-e87b-5721-8a50-74d424d19e09",
+      "name": "Agrupar en historias (IA)",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        1840,
+        300
+      ],
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.prompt }}",
+        "options": {
+          "systemMessage": "Sos un analista de monitoreo de medios preciso. Respondé siempre y solo con un objeto JSON válido, sin texto antes ni después y sin bloques de código."
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "21156b17-e146-5e85-bd65-c434229bd09d",
+      "name": "Modelo IA (agrupar)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [
+        1860,
+        520
+      ],
+      "parameters": {
+        "model": "qwen2.5:14b",
+        "options": {
+          "temperature": 0,
+          "numCtx": 8192
+        }
+      },
+      "credentials": {
+        "ollamaApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Ollama Local"
+        }
+      }
+    },
+    {
+      "id": "8b0d6079-5260-5277-9c81-c91db9163f13",
+      "name": "Armar historias",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2100,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const CFG = $('Fuentes y ventana').first().json.cfg;\n// Arma las historias del corte (agrupacion de la IA, con respaldo propio si falla) y pide una tarjeta por historia.\nconst { ctx } = $('Preparar historias').first().json;\nconst rel = ctx.rel;\nconst N = Math.min(rel.length, 40);\nconst leer = r => { const s = String((r && r.json && (r.json.output ?? r.json.text ?? r.json.response)) ?? ''); const m = s.match(/\\{[\\s\\S]*\\}/); return JSON.parse(m ? m[0] : s); };\nconst STOP = new Set('para como sobre entre desde hasta tras cuando donde porque pero sino este esta estos estas ese esa eso aquel todo todos toda todas otro otra otros otras cual cuales quien quienes cuanto cuantos nuevo nueva nuevos nuevas argentina argentino'.split(' '));\nconst toks = s => new Set(s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').split(' ').filter(w => w.length >= 4 && !STOP.has(w)));\nlet grupos = null, agrupoIA = true;\ntry {\n  const o = leer($input.first());\n  const usados = new Set();\n  grupos = (o.historias || []).map(h => (Array.isArray(h.ids) ? h.ids : []).map(Number).filter(i => Number.isInteger(i) && i >= 0 && i < N && !usados.has(i) && usados.add(i)))\n    .filter(g => g.length > 0);\n  for (let i = 0; i < N; i++) if (!usados.has(i)) grupos.push([i]);\n  if (grupos.length === 0) throw new Error('sin grupos');\n} catch (e) {\n  agrupoIA = false; grupos = [];\n  const tk = rel.slice(0, N).map(r => toks(r.titulo));\n  for (let i = 0; i < N; i++) {\n    let g = grupos.find(gr => gr.some(j => { let c = 0; for (const w of tk[i]) if (tk[j].has(w)) c++; return c >= 3 || c / Math.max(1, Math.min(tk[i].size, tk[j].size)) >= 0.5; }));\n    if (g) g.push(i); else grupos.push([i]);\n  }\n}\n// Control de coherencia: si la IA metió en una historia una nota que no comparte ninguna palabra de contenido\n// (titular y bajada) con las demás, se separa como historia propia. Evita que una nota distinta quede escondida en otra tarjeta.\nconst contenido = r => toks(r.titulo + ' ' + (r.desc || ''));\nlet separadas = 0;\nif (agrupoIA) {\n  for (let cambio = true; cambio;) {\n    cambio = false;\n    for (const g of grupos) {\n      if (g.length < 2) continue;\n      const k = g.findIndex(i => { const mio = contenido(rel[i]); return !g.some(j => j !== i && [...contenido(rel[j])].some(w => mio.has(w))); });\n      if (k !== -1) { grupos.push(g.splice(k, 1)); separadas++; cambio = true; break; }\n    }\n  }\n}\n// Segunda pasada: une historias que comparten un nombre propio distintivo (ej. \"Darwin\", \"Conlara\") aunque la IA las haya separado.\n// Se excluyen nombres genéricos del rubro, que aparecen en historias distintas.\nconst GENERICOS = new Set(('argentina argentinas buenos aires gobierno nacion provincia ciudad presidente ministro valle nuevo nueva este esta como cuando segun tras desde hasta sobre para estos estas ' + CFG.genericos).split(' '));\nconst propios = r => new Set((r.titulo.match(/(?<!^)(?<![.:]\\s)\\b[A-ZÁÉÍÓÚÑ][a-záéíóúñ]{3,}/g) || []).map(w => w.toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, '')).filter(w => !GENERICOS.has(w)));\nlet unio = 0;\nfor (let a = 0; a < grupos.length; a++) for (let b = grupos.length - 1; b > a; b--) {\n  const A = new Set(grupos[a].flatMap(i => [...propios(rel[i])])), B = grupos[b].flatMap(i => [...propios(rel[i])]);\n  if (B.some(w => A.has(w))) { grupos[a] = grupos[a].concat(grupos[b]); grupos.splice(b, 1); unio++; }\n}\nconst SENT = ['negativo', 'positivo', 'neutral'];\n// Orden de las tarjetas: cantidad de notas, más peso si nombran a la empresa (es el cliente) y mucho más si son negativas (riesgo: no puede quedar fuera de las tarjetas).\nconst EMPRESA = new RegExp(CFG.alias_regex, 'i');\nconst historias = grupos.map(g => g.map(i => rel[i])).map(l => ({\n  notas: l, n: l.length, t: Math.max(...l.map(x => x.t)),\n  sent: SENT.map(s => [s, l.filter(x => x.sent === s).length]).sort((a, b) => b[1] - a[1])[0][0]\n})).map(x => Object.assign(x, { peso: x.n + (x.notas.some(r => EMPRESA.test(r.titulo)) ? 2 : 0) + (x.sent === 'negativo' ? 3 : 0) }))\n  .sort((a, b) => b.peso - a.peso || b.t - a.t);\nconst top = historias.slice(0, 4);\nconst resto = historias.slice(4).flatMap(h => h.notas).concat(rel.slice(N)); // las que pasan de 40 no se agrupan, pero se muestran\nreturn top.map((h, k) => ({ json: {\n  k, n: h.n, sent: h.sent, notas: h.notas,\n  ctx: k === 0 ? Object.assign({}, ctx, { agrupoIA, unio, separadas, resto, total_historias: historias.length }) : undefined,\n  prompt:\n`Sos redactor de un informe de monitoreo de medios para ${CFG.cliente}. Escribí una tarjeta sobre esta historia, a partir de estas notas:\n\n${h.notas.slice(0, 8).map(x => '- Titular: ' + x.titulo + (x.desc ? ' | Bajada: ' + x.desc.slice(0, 200) : '') + ' | Medio que la publicó: ' + x.medio).join('\\n')}\n\nFormato:\n- \"titular\": una oración narrativa, en tercera persona y pasado, que cuente qué pasó y quién lo cubrió. Hasta 120 caracteres. Ejemplos de estilo: \"Medios gremiales cubrieron el paro en la planta principal y su impacto en los servicios\"; \"${CFG.cliente} anunció una inversión para ampliar su sede del norte\".\n- \"texto\": 2 oraciones, hasta 260 caracteres en total, que expliquen el hecho y, solo si las notas lo dicen, su impacto para la empresa o sus clientes.\nReglas estrictas:\n- Usá SOLO lo que dicen los titulares y bajadas. No inventes cifras, fechas, lugares, objetivos ni consecuencias.\n- Si las notas no explican el motivo o el impacto, no lo supongas: contá solo el hecho y quién lo cubrió. Frases como \"busca fortalecer\", \"para mejorar\" u \"optimizar\" solo van si están en las notas.\n- El medio que publicó la nota NO es un lugar ni un protagonista del hecho: solo podés nombrarlo como fuente (\"según Infobae\", \"MDZ Online informó\").\n- No hables del sentimiento.\n- No escribas frases sobre lo que falta o no se sabe (\"no se especifica\", \"no se detalla\", \"se desconoce\"): si no hay más datos, escribí una sola oración.\n\nRespondé SOLO con un JSON: {\"titular\": \"...\", \"texto\": \"...\"}`\n} }));\n"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "c16066c7-22b2-5f4b-b00d-9cbe3b690848",
+      "name": "Redactar tarjetas (IA)",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        2340,
+        300
+      ],
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.prompt }}",
+        "options": {
+          "systemMessage": "Sos un analista de monitoreo de medios preciso. Respondé siempre y solo con un objeto JSON válido, sin texto antes ni después y sin bloques de código."
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "5230d14a-46a8-53b5-9bb2-acb71ac86596",
+      "name": "Modelo IA (redactar)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [
+        2360,
+        520
+      ],
+      "parameters": {
+        "model": "qwen2.5:14b",
+        "options": {
+          "temperature": 0,
+          "numCtx": 8192
+        }
+      },
+      "credentials": {
+        "ollamaApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Ollama Local"
+        }
+      }
+    },
+    {
+      "id": "8b07984f-7003-576c-8841-e8487e63fb88",
+      "name": "Armar informe",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2600,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Arma el JSON del informe, compara con el corte anterior, mide la calidad con tus correcciones y arma el mail de revisión.\nconst http = (typeof $helpers !== 'undefined' && $helpers.httpRequest) ? $helpers : this.helpers;\nconst info = $('Fuentes y ventana').first().json;\nconst cfg = info.cfg;\nconst AUTH = { 'X-Token': cfg.token };\nconst hist = $('Armar historias').all().map(x => x.json);\nconst ctx = hist[0].ctx;\nconst rel = ctx.rel;\nconst res = $input.all();\nconst leer = r => { const s = String((r && r.json && (r.json.output ?? r.json.text ?? r.json.response)) ?? ''); const m = s.match(/\\{[\\s\\S]*\\}/); return JSON.parse(m ? m[0] : s); };\nconst cortar = (s, max) => { s = String(s).trim().replace(/\\s+/g, ' '); if (s.length <= max) return s; const c = s.slice(0, max); const p = Math.max(c.lastIndexOf('. '), c.lastIndexOf('? '), c.lastIndexOf('! ')); return p > max * 0.5 ? c.slice(0, p + 1) : c.slice(0, c.lastIndexOf(' ')) + '...'; };\nconst esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\nconst firma = s => { let a = 0x811c9dc5, b = 0x5bd1e995; for (let i = 0; i < s.length; i++) { const c = s.charCodeAt(i); a = Math.imul(a ^ c, 0x01000193) >>> 0; b = Math.imul(b ^ c, 0x85EBCA77) >>> 0; } return a.toString(16).padStart(8, '0') + b.toString(16).padStart(8, '0'); };\nconst corteKey = info.fecha + '|' + info.corte;\nlet respaldo = 0;\nconst tarjetas = hist.map((h, i) => {\n  let titular = '', texto = '';\n  try { const o = leer(res[i]); titular = String(o.titular || '').trim().replace(/\\.$/, ''); texto = String(o.texto || '').trim(); } catch (e) {}\n  // La IA a veces agrega frases sobre lo que falta (\"sin detalles adicionales...\"): se sacan, no aportan al cliente\n  texto = texto.replace(/,?\\s*(sin (mayores |más |otros )?(detalles|precisiones|datos)|sin precisar|sin especificar)[^.]*\\./gi, '.')\n    .split(/(?<=\\.)\\s+/).filter(o => !/no se (especific|detall|inform|precis|menciona)|se desconoce|no hay (más )?(detalles|información)/i.test(o)).join(' ').trim();\n  if (!titular || titular.length > 140) { titular = cortar(h.notas[0].titulo, 140); respaldo++; }\n  if (!texto) { texto = h.n === 1 ? 'Nota publicada por ' + h.notas[0].medio + '.' : 'Cubrieron este tema ' + [...new Set(h.notas.map(x => x.medio))].slice(0, 5).join(', ') + '.'; respaldo++; }\n  const medios = [...new Set(h.notas.map(x => x.medio))].length;\n  return { titular, texto: cortar(texto, 300) + ' ' + h.n + (h.n === 1 ? ' nota' : ' notas') + ' en ' + medios + (medios === 1 ? ' medio' : ' medios') + ', sentiment predominante ' + h.sent + '.' };\n});\nconst NOMBRE = { infraestructura: 'Inversiones e infraestructura', demanda: 'Clientes y demanda', operacion: 'Operación y servicios', institucional: 'Institucional y reputación', otros: 'Otros' };\nconst cuenta = k => rel.filter(r => r.tema === k).length;\nconst temas = Object.keys(NOMBRE).map(k => [NOMBRE[k], cuenta(k)]).filter(t => t[1] > 0).sort((a, b) => b[1] - a[1]);\nconst sentiment = { positivo: 0, neutral: 0, negativo: 0 };\nrel.forEach(r => sentiment[r.sent]++);\nconst pct = k => Math.round(100 * sentiment[k] / rel.length);\nconst highlights = [], usados = new Set();\nconst agregar = r => { if (highlights.length < 6 && !usados.has(r.medio)) { usados.add(r.medio); highlights.push({ medio: r.medio, hora: r.hora, titular: cortar(r.titulo, 140) }); } };\nhist.forEach(h => { const pref = h.notas.find(x => x.via === 'medio' && !usados.has(x.medio)) || h.notas.find(x => !usados.has(x.medio)); if (pref) agregar(pref); });\n// Después, notas de fuera de las tarjetas (más variedad de temas) y recién al final otras notas de las mismas historias\nctx.resto.forEach(agregar);\nrel.forEach(agregar);\n// Corte anterior en el tiempo, guardado de este corte y chequeos. Nada de esto falla en silencio: los problemas van al mail.\nconst avisos = [];\nlet anterior = null, calidad = null, reco = null;\ntry { const x = await http.httpRequest({ method: 'GET', url: cfg.servidor + '/cortes/ultimo?antes=' + info.hasta, headers: AUTH, json: true }); anterior = (typeof x === 'string' ? JSON.parse(x) : x).corte; }\ncatch (e) { avisos.push('No pude leer el corte anterior: ' + e.message); }\nconst items = rel.map(r => ({ clave: r.clave, rel: true, rel_ia: r.rel_ia, sent: r.sent })).concat(ctx.descartadas.map(d => ({ clave: d.clave, rel: false, rel_ia: false })));\nconst consideradas = items.map(i => i.clave).concat(ctx.sinClasificar.map(x => x.clave));\nif (info.prueba) avisos.push('Es una prueba manual: no se guardó como corte (no cuenta para la calidad ni para la comparación).');\nelse {\n  try { await http.httpRequest({ method: 'POST', url: cfg.servidor + '/cortes', headers: AUTH, body: { fecha: info.fecha, corte: info.corte, turno: info.turno, desde: info.desde, hasta: info.hasta, menciones: rel.length, sentiment, temas, historias: tarjetas.map(t => t.titular), items, consideradas, sin_clasificar: ctx.sinClasificar.length }, json: true }); }\n  catch (e) { avisos.push('No pude guardar este corte en el servicio: no va a contar para la calidad ni como corte anterior, y sus notas podrían repetirse en el próximo. Detalle: ' + e.message); }\n}\ntry { const x = await http.httpRequest({ method: 'GET', url: cfg.servidor + '/calidad', headers: AUTH, json: true }); calidad = typeof x === 'string' ? JSON.parse(x) : x; }\ncatch (e) { avisos.push('No pude leer la calidad medida: ' + e.message); }\nif (calidad && Array.isArray(calidad.corruptos) && calidad.corruptos.length) avisos.push('Hay datos que estaban corruptos y se apartaron (' + calidad.corruptos.map(esc).join(', ') + '). El servicio siguió con un archivo nuevo, así que falta ese historial. Revisalos en la carpeta del servicio y, cuando los resuelvas, borralos o movelos de la carpeta para que este aviso deje de salir.');\ntry { const x = await http.httpRequest({ method: 'GET', url: cfg.servidor + '/recoleccion?desde=' + info.desde + '&hasta=' + info.hasta, headers: AUTH, json: true }); reco = typeof x === 'string' ? JSON.parse(x) : x; }\ncatch (e) { avisos.push('No pude leer el registro de recolección: ' + e.message); }\nif (reco && reco.max_hueco_min > 120) avisos.push('La recolección horaria tuvo un hueco de ' + Math.round(reco.max_hueco_min / 60) + ' h en esta ventana (' + reco.corridas + ' corridas). Pueden faltar notas de los RSS de medios.');\nconst huecoCortes = anterior && anterior.hasta !== info.desde;\nif (huecoCortes) avisos.push('El corte anterior registrado es del ' + esc(anterior.fecha) + ', ' + anterior.corte + ': hubo cortes que no se procesaron en el medio. La comparación no es contra el corte inmediatamente anterior, y las notas marcadas \"tarde\" pueden ser de esa ventana perdida.');\nconst delta = anterior ? rel.length - anterior.menciones : null;\nconst comp = anterior ? (delta === 0 ? 'igual que el' : (delta > 0 ? '+' + delta + ' respecto del' : delta + ' respecto del')) + ' corte anterior: ' + esc(anterior.fecha) + ', ' + anterior.corte + ', con ' + anterior.menciones + ' menciones' + (info.lunesAM ? '; este corte cubre todo el fin de semana' : '') : 'sin corte anterior para comparar';\n// Links de corrección: cada click queda registrado y alimenta la medición de calidad\nconst link = (clave, v, txt, color) => { if (info.prueba) return ''; const q = 'k=' + encodeURIComponent(clave) + '&c=' + encodeURIComponent(corteKey) + '&v=' + v + '&s=' + firma(cfg.token + '|' + clave + '|' + corteKey + '|' + v); return '<a style=\"color:' + color + ';text-decoration:none;border:1px solid ' + color + ';border-radius:8px;padding:0 5px;font-size:11px;margin-left:3px\" href=\"' + cfg.feedback_url + '?' + q + '\">' + txt + '</a>'; };\nconst corregir = r => info.prueba ? '' : '<br><span style=\"color:#999;font-size:11px\">¿Mal? </span>' + link(r.clave, 'no_relevante', 'no es relevante', '#777') +\n  ['positivo', 'neutral', 'negativo'].filter(s => s !== r.sent).map(s => link(r.clave, s, 'era ' + s, ({ positivo: '#34A853', negativo: '#E53935', neutral: '#777' })[s])).join('');\nconst st = ctx.stats || {};\nconst badge = s => '<span style=\"display:inline-block;padding:1px 6px;border-radius:8px;font-size:11px;color:#fff;background:' + ({ positivo: '#34A853', negativo: '#E53935', neutral: '#9E9E9E' })[s] + '\">' + s + '</span>';\nconst fila = r => '<li style=\"margin:5px 0\">' + badge(r.sent) + ' <b>' + esc(r.medio) + '</b> ' + r.hora + ': ' + (r.link ? '<a href=\"' + esc(r.link) + '\">' + esc(r.titulo) + '</a>' : esc(r.titulo)) + ' <span style=\"color:#888\">(' + esc(NOMBRE[r.tema]) + ')</span>' + (r.tarde ? ' <span style=\"color:#B26A00;font-size:11px\">[' + (huecoCortes ? 'publicada antes de la ventana' : 'publicada antes de la ventana, indexada después del corte anterior') + ']</span>' : '') + (r.regla ? ' <span style=\"color:#B26A00;font-size:11px\">[la IA la descartó; entra por regla fija: nombra a la empresa]</span>' : '') + corregir(r) + '</li>';\nconst pc = x => x && x.n ? Math.round(100 * (x.n - x.errores) / x.n) + '% (' + x.errores + ' errores en ' + x.n + ')' : 's/d';\nconst lineaCalidad = calidad && calidad.cortes_revisados > 0\n  ? 'Calidad del sistema (IA + reglas) sobre ' + calidad.cortes_revisados + (calidad.cortes_revisados === 1 ? ' corte revisado' : ' cortes revisados') + ' a fondo, últimos ' + calidad.dias + ' días: ' +\n    'relevantes que lo eran ' + pc(calidad.relevantes) + '; descartadas bien descartadas ' + pc(calidad.descartadas) + '; sentiment ' + pc(calidad.sentiment) + '. ' +\n    'Solo la IA, sin la regla fija: ' + pc(calidad.solo_ia) + '. Notas que la IA no pudo clasificar: ' + calidad.sin_clasificar + '.'\n  : 'Todavía no hay cortes marcados como \"revisé todo\": la calidad se mide solo sobre esos, para no contar como acierto lo que no miraste.';\nconst DIAS = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];\n// Con el día adelante cuando la ventana empieza otro día (\"vie 15:45 a lun 09:45\")\nconst conDia = new Date(info.desde - 3 * 3600e3).getUTCDate() !== new Date(info.hasta - 3 * 3600e3).getUTCDate();\nconst ventana = h => { const x = new Date(h - 3 * 3600e3); return (conDia ? DIAS[x.getUTCDay()] + ' ' : '') + String(x.getUTCHours()).padStart(2, '0') + ':' + String(x.getUTCMinutes()).padStart(2, '0'); };\nconst html = [\n  '<div style=\"font-family:Arial,sans-serif;font-size:14px;color:#222;max-width:760px\">',\n  '<div style=\"border-left:5px solid #FF6A13;padding:6px 12px;margin-bottom:12px\"><div style=\"font-size:18px;font-weight:bold\">' + esc(info.cliente_corto) + ' | Monitoreo: ' + esc(info.fecha) + ' | Corte ' + info.corte + '</div>',\n  '<div style=\"color:#555\">Borrador automático para revisión' + (info.prueba ? ' (prueba manual)' : '') + '. No se envió a nadie más. Ventana: ' + ventana(info.desde) + ' a ' + ventana(info.hasta) + '.</div></div>',\n  (info.prueba ? '<p style=\"margin:0 0 10px;color:#777\">Es una prueba: no tiene botones de corrección, porque se registrarían sobre el corte real de esta fecha.</p>'\n    : '<p style=\"margin:0 0 10px\">Cuando termines de revisar y corregir todas las notas: ' + link('__corte__', 'revisado', 'revisé todo este corte', '#FF6A13') + '</p>') +\n  (avisos.length ? '<div style=\"background:#FFF4E5;border:1px solid #F5C27A;padding:8px 12px;margin:0 0 10px;font-size:13px\"><b>Avisos</b><ul style=\"margin:4px 0 0;padding-left:18px\">' + avisos.map(a => '<li>' + a + '</li>').join('') + '</ul></div>' : '') +\n  '<p><b>' + rel.length + ' menciones relevantes</b> (' + comp + '). Sentiment: ' + pct('positivo') + '% positivo, ' + pct('neutral') + '% neutral, ' + pct('negativo') + '% negativo.<br>',\n  'Temas: ' + temas.map(t => esc(t[0]) + ' ' + t[1]).join(', ') + '.</p>',\n  '<h3 style=\"color:#FF6A13;margin-bottom:4px\">Historias del corte (las tarjetas del informe)</h3>',\n  hist.map((h, i) => '<p style=\"margin:10px 0 2px\"><b>' + (i + 1) + '. ' + esc(tarjetas[i].titular) + '</b><br><span style=\"color:#444\">' + esc(tarjetas[i].texto) + '</span></p><ul style=\"margin:2px 0 8px;padding-left:18px\">' + h.notas.map(fila).join('') + '</ul>').join(''),\n  ctx.resto.length ? '<h3 style=\"color:#FF6A13;margin-bottom:4px\">Otras notas relevantes</h3><ul style=\"padding-left:18px\">' + ctx.resto.map(fila).join('') + '</ul>' : '',\n  ctx.descartadas.length ? '<h3 style=\"color:#999;margin-bottom:4px\">Descartadas por la IA (' + ctx.descartadas.length + '). Revisá que no falte nada</h3><ul style=\"padding-left:18px;color:#777;font-size:12px\">' + ctx.descartadas.map(d => '<li style=\"margin:4px 0\"><b>' + esc(d.medio) + '</b>: ' + (d.link ? '<a style=\"color:#777\" href=\"' + esc(d.link) + '\">' + esc(d.titulo) + '</a>' : esc(d.titulo)) + '. <i>' + esc(d.motivo) + '</i> ' + link(d.clave, 'si_relevante', 'sí era relevante', '#FF6A13') + '</li>').join('') + '</ul>' : '',\n  ctx.sinClasificar.length ? '<p style=\"color:#C62828;font-size:12px\">La IA no pudo clasificar ' + ctx.sinClasificar.length + ' notas: ' + ctx.sinClasificar.map(x => esc(x.titulo)).join('; ') + '</p>' : '',\n  '<h3 style=\"color:#999;margin-bottom:4px\">Cómo se armó</h3><ul style=\"padding-left:18px;color:#777;font-size:12px\">',\n  '<li>' + lineaCalidad + '</li>',\n  '<li>Fuentes consultadas: ' + (st.fuentes_ok || []).length + ' ok' + ((st.fuentes_fallidas || []).length ? ', fallidas: ' + esc(st.fuentes_fallidas.join(', ')) : '') + '. Notas en el archivo del servicio (últimos 7 días): ' + (st.guardadas_total ?? 's/d') + '.</li>',\n  '<li>Notas leídas: ' + st.leidas + '. Descartadas por palabra clave: ' + st.por_palabra + '. Duplicadas entre fuentes: ' + (st.duplicadas || 0) + (st.ya_contadas ? '. Ya contadas en otro corte (traídas por otra fuente): ' + st.ya_contadas : '') + '. Candidatas en la ventana: ' + st.en_ventana + (st.tardias ? ' (incluye ' + st.tardias + ' indexadas tarde del borde anterior)' : '') + (st.recortadas ? ' (se dejaron afuera ' + st.recortadas + ' por límite)' : '') + '. Relevantes según la IA: ' + rel.length + '.</li>',\n  '<li>Agrupación en historias: ' + (ctx.agrupoIA ? 'IA' : 'regla de respaldo (la IA no respondió bien)') + (ctx.unio ? ', más ' + ctx.unio + ' unión(es) por nombre propio compartido' : '') + (ctx.separadas ? ', ' + ctx.separadas + ' nota(s) separada(s) de una historia con la que no compartían contenido' : '') + '. Tarjetas con texto de respaldo: ' + respaldo + '.</li>',\n  '<li>La relevancia se mide sobre lo que llegó a la IA: lo que el filtro por palabras clave descartó antes no aparece en el mail y no se puede corregir.</li>',\n  '<li>Límites: solo medios web (Google News, Bing News y RSS de medios), sin redes sociales ni alcance. Tema y sentiment los clasifica una IA local sobre titular y bajada.</li>',\n  '</ul></div>'\n].join('');\nreturn [{ json: {\n  cliente: info.cliente, cliente_corto: info.cliente_corto, fecha: info.fecha, corte: info.corte,\n  menciones: rel.length, alcance: 's/d', temas: temas.slice(0, 4), sentiment, tarjetas, highlights,\n  fuente_nota: 'Fuente: medios web (Google News, Bing News y RSS de medios). Clasificación con IA. No incluye redes sociales ni alcance.',\n  _meta: { asunto: 'Borrador ' + info.cliente_corto + ' | Monitoreo ' + info.fecha + ' | Corte ' + info.corte + ': ' + rel.length + ' menciones' + (info.prueba ? ' (prueba)' : '') + (avisos.length && !info.prueba ? ' [con avisos]' : ''), html }\n} }];\n"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "30c1a368-6941-51f0-9f90-1b3702a87c3d",
+      "name": "Generar pptx",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2840,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Fuentes y ventana').first().json.cfg.servidor + '/monitoreo' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Token",
+              "value": "={{ $('Fuentes y ventana').first().json.cfg.token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data"
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "b7d1b3fd-c912-5eb7-9d94-b5071f02a035",
+      "name": "Mandar a revisión",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        3080,
+        200
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "YOUR_REVIEW_EMAIL",
+        "emailType": "html",
+        "subject": "={{ $('Armar informe').first().json._meta.asunto }}",
+        "message": "={{ $('Armar informe').first().json._meta.html }}",
+        "options": {
+          "appendAttribution": false,
+          "attachmentsUi": {
+            "attachmentsBinary": [
+              {
+                "property": "data"
+              }
+            ]
+          }
+        }
+      },
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "4cae0c35-3426-51f5-bad6-4e3c04fd8fac",
+      "name": "Ping: corte OK",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3320,
+        200
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Fuentes y ventana').first().json.prueba ? '' : $('Fuentes y ventana').first().json.cfg.ping }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "2d4ddbdd-1da1-5e06-a877-3e41cff26077",
+      "name": "Preparar alerta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3080,
+        620
+      ],
+      "parameters": {
+        "jsCode": "// Decide qué hacer con un corte que no llegó al final: avisos (sin material) vs fallas reales.\n// Arma el mail y la URL de healthchecks (las fallas se reportan como /fail; un aviso cuenta como corrida sana).\nlet info = null;\ntry { info = $('Fuentes y ventana').first().json; } catch (e) {}\nlet cfg = info && info.cfg;\nif (!cfg) { try { cfg = $('Config').first().json.cfg; } catch (e) {} }\nconst recolectando = info && info.modo === 'recolectar';\nconst esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst salida = [];\nfor (const it of $input.all()) {\n  const e = it.json.error;\n  const msg = String((e && (e.message || e.description || e)) || it.json.message || JSON.stringify(it.json)).slice(0, 1500);\n  const aviso = msg.indexOf('AVISO') !== -1;\n  if (recolectando) continue; // la recolección horaria no manda mails: si algo sigue roto, lo detecta el informe\n  const paso = (typeof $prevNode !== 'undefined' && $prevNode && $prevNode.name) || 'desconocido';\n  salida.push({ json: {\n    ping_url: cfg && cfg.ping && !(info && info.prueba) ? cfg.ping + (aviso ? '' : '/fail') : '', // las pruebas manuales no tocan healthchecks\n    asunto: aviso ? 'Monitoreo de medios: sin material en el corte' + (info ? ' de las ' + info.corte : '') : 'Monitoreo de medios: FALLA, requiere atención',\n    html: '<div style=\"font-family:Arial,sans-serif;font-size:14px\">' +\n      (aviso ? '<b>No se generó informe porque no hubo material.</b><br><br>' : '<b>El monitoreo automático se detuvo en el paso \"' + esc(paso) + '\".</b><br><br>') +\n      esc(msg.replace(/^AVISO:\\s*/, '')) +\n      (aviso ? '' : '<br><br><span style=\"color:#888\">Chequeos rápidos: <code>curl localhost:8787/health</code> (servicio), <code>ollama list</code> (modelo), y que Docker esté abierto.</span>') + '</div>'\n  } });\n  break; // un solo mail por corrida\n}\nreturn salida;\n"
+      }
+    },
+    {
+      "id": "dc8741c0-c8df-547e-a793-d9ee97dcf3ee",
+      "name": "Ping: estado",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3320,
+        620
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.ping_url }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "e52f5b76-dc08-5ee5-a3f9-e489953af14d",
+      "name": "Alerta",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        3560,
+        620
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "YOUR_REVIEW_EMAIL",
+        "emailType": "html",
+        "subject": "={{ $('Preparar alerta').first().json.asunto }}",
+        "message": "={{ $('Preparar alerta').first().json.html }}",
+        "options": {
+          "appendAttribution": false
+        }
+      }
+    },
+    {
+      "id": "53dc2b5b-3dcf-549d-9a82-6b500f9b7a9a",
+      "name": "Nota: correcciones",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        400,
+        820
+      ],
+      "parameters": {
+        "content": "### Correcciones desde el mail\nCada botón del mail de revisión (\"no es relevante\", \"era negativo\", etc.) abre esta ruta pública. Se valida la firma del link y se guarda en el servicio local. Requiere el workflow **activo** y tu n8n accesible desde internet.",
+        "width": 420,
+        "height": 200,
+        "color": 5
+      }
+    },
+    {
+      "id": "e6eff018-9c31-52a6-860a-a3b2e26289dc",
+      "name": "Corrección desde el mail",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        900
+      ],
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "media-feedback",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "55069318-94d9-5af4-9a8c-1e1e789e4ee7",
+      "name": "Registrar corrección",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        900
+      ],
+      "parameters": {
+        "jsCode": "// Registra una corrección que hiciste desde el mail de revisión y responde una página simple.\nconst http = (typeof $helpers !== 'undefined' && $helpers.httpRequest) ? $helpers : this.helpers;\nconst entrada = $input.first().json;\nif (entrada.modo || !entrada.query) return []; // vino de un disparador del informe: no es para este camino\nconst cfg = entrada.cfg;\nconst q = entrada.query || {};\nconst firma = s => { let a = 0x811c9dc5, b = 0x5bd1e995; for (let i = 0; i < s.length; i++) { const c = s.charCodeAt(i); a = Math.imul(a ^ c, 0x01000193) >>> 0; b = Math.imul(b ^ c, 0x85EBCA77) >>> 0; } return a.toString(16).padStart(8, '0') + b.toString(16).padStart(8, '0'); };\nconst TIPOS = { revisado: 'revisaste todo este corte; desde ahora cuenta para medir la calidad', no_relevante: 'no era relevante', si_relevante: 'sí era relevante', positivo: 'el sentiment era positivo', neutral: 'el sentiment era neutral', negativo: 'el sentiment era negativo' };\nconst pagina = (titulo, texto, ok) => '<!doctype html><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><body style=\"font-family:Arial,sans-serif;max-width:480px;margin:40px auto;padding:0 16px\"><div style=\"border-left:5px solid ' + (ok ? '#FF6A13' : '#C62828') + ';padding:8px 14px\"><h2 style=\"margin:0 0 6px\">' + titulo + '</h2><p style=\"color:#444\">' + texto + '</p></div><p style=\"color:#999;font-size:12px\">Monitoreo de medios. Podés cerrar esta pestaña.</p></body>';\nlet html;\nif (!q.k || !q.c || !TIPOS[q.v] || q.s !== firma(cfg.token + '|' + q.k + '|' + q.c + '|' + q.v)) {\n  html = pagina('Link inválido', 'Este link no es válido o está incompleto. No se registró nada.', false);\n} else {\n  try {\n    await http.httpRequest({ method: 'POST', url: cfg.servidor + '/feedback', headers: { 'X-Token': cfg.token }, body: { clave: q.k, corte: q.c, tipo: q.v }, json: true });\n    html = pagina('Corrección registrada', 'Anotado: ' + TIPOS[q.v] + '. Se va a usar para medir la precisión de la IA y mejorar los prompts.', true);\n  } catch (e) {\n    html = pagina('No se pudo registrar', 'El servicio local no respondió (' + String(e.message).slice(0, 120) + '). Probá de nuevo en un rato.', false);\n  }\n}\nreturn [{ json: { html } }];\n"
+      }
+    },
+    {
+      "id": "efdc054c-4b0b-56c4-81c0-3b2517ff1c43",
+      "name": "Responder",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        900
+      ],
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Cada hora: recolectar": {
+      "main": [
+        [
+          {
+            "node": "Modo recolectar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Corte 9:45 y 15:45": {
+      "main": [
+        [
+          {
+            "node": "Modo informe",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Probar a mano": {
+      "main": [
+        [
+          {
+            "node": "Modo prueba",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Modo recolectar": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Modo informe": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Modo prueba": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Fuentes y ventana",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Registrar corrección",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fuentes y ventana": {
+      "main": [
+        [
+          {
+            "node": "Buscar en fuentes",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Preparar alerta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar en fuentes": {
+      "main": [
+        [
+          {
+            "node": "Unir, filtrar y guardar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unir, filtrar y guardar": {
+      "main": [
+        [
+          {
+            "node": "Clasificar notas (IA)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Preparar alerta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clasificar notas (IA)": {
+      "main": [
+        [
+          {
+            "node": "Preparar historias",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar historias": {
+      "main": [
+        [
+          {
+            "node": "Agrupar en historias (IA)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Preparar alerta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agrupar en historias (IA)": {
+      "main": [
+        [
+          {
+            "node": "Armar historias",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar historias": {
+      "main": [
+        [
+          {
+            "node": "Redactar tarjetas (IA)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Preparar alerta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Redactar tarjetas (IA)": {
+      "main": [
+        [
+          {
+            "node": "Armar informe",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar informe": {
+      "main": [
+        [
+          {
+            "node": "Generar pptx",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Preparar alerta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generar pptx": {
+      "main": [
+        [
+          {
+            "node": "Mandar a revisión",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Preparar alerta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mandar a revisión": {
+      "main": [
+        [
+          {
+            "node": "Ping: corte OK",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Preparar alerta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar alerta": {
+      "main": [
+        [
+          {
+            "node": "Ping: estado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ping: estado": {
+      "main": [
+        [
+          {
+            "node": "Alerta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Modelo IA (clasificar)": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Clasificar notas (IA)",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Modelo IA (agrupar)": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Agrupar en historias (IA)",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Modelo IA (redactar)": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Redactar tarjetas (IA)",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Corrección desde el mail": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Registrar corrección": {
+      "main": [
+        [
+          {
+            "node": "Responder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Argentina/Buenos_Aires",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "pinData": {}
+}

@@ -1,0 +1,118 @@
+{
+  "name": "Sentinela 00 · Alerta de errores",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "f53f47f1-b089-4d6f-b823-ac13f89da7f1",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT valor FROM config WHERE chave = 'telegram_admin_chat_id';",
+        "options": {}
+      },
+      "id": "31ea5e22-544d-4b96-8a9f-50e4f5f011a5",
+      "name": "Admin chat",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        260,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SntPostgres_001",
+          "name": "Sentinela Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Entrada: Error Trigger + fila con el chat id del admin.\nconst e = $('Error Trigger').first().json || {};\nconst chat = String(($input.first().json || {}).valor || '').trim();\nif (!chat) return [];\nconst wf = (e.workflow && e.workflow.name) || 'workflow';\nconst nodo = (e.execution && e.execution.lastNodeExecuted) || '?';\nconst msg = (e.execution && e.execution.error && e.execution.error.message) || 'sin detalle';\nreturn [{ json: { chat_id: chat, texto: `❌ Falló \"${wf}\" en el nodo \"${nodo}\":\\n${String(msg).slice(0, 600)}` } }];\n"
+      },
+      "id": "1df06da3-bf7c-46c5-b3c4-13e05fd20987",
+      "name": "Armar aviso",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.texto }}",
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "appendAttribution": false,
+          "disable_web_page_preview": true
+        }
+      },
+      "id": "130484e6-9c69-4a74-8209-e7ae33eca024",
+      "name": "Avisar por Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        780,
+        0
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "SntTelegram_001",
+          "name": "Sentinela Bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Admin chat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Admin chat": {
+      "main": [
+        [
+          {
+            "node": "Armar aviso",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar aviso": {
+      "main": [
+        [
+          {
+            "node": "Avisar por Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Sao_Paulo"
+  },
+  "pinData": {}
+}

@@ -78,7 +78,7 @@ list_files | xargs -0 grep -noEIH -- '[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0
   case "$tok" in
     *@example.com|*@example.org|*@example.net|*@your-project.iam.gserviceaccount.com) continue ;;
     *.example) continue ;;   # reserved TLD (RFC 2606), can never be a real address
-    alert@indeed.com|jobalerts-noreply@linkedin.com) continue ;;
+    alert@indeed.com|jobalerts-noreply@linkedin.com|dmca@telegram.org) continue ;;
   esac
   echo "${line%:*}"
 done | emit email

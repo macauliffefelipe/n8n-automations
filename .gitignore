@@ -16,3 +16,13 @@ _private/
 Thumbs.db
 node_modules/
 *.log
+__pycache__/
+*.pyc
+*.session
+*.session-journal
+
+# media-monitoring service runtime files
+token.txt
+datos_*.json
+*.corrupto
+server.log

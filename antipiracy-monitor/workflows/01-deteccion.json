@@ -1,0 +1,946 @@
+{
+  "name": "Sentinela 01 · Deteccion",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 7 * * *"
+            }
+          ]
+        }
+      },
+      "id": "e5231ebb-ba21-4d68-8372-331c88474b8e",
+      "name": "Cron 07:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        170
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "813be46d-6222-4c1d-b8fc-4a9b2a10fb7e",
+      "name": "Manual",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT jsonb_object_agg(chave, valor) AS cfg FROM config;",
+        "options": {}
+      },
+      "id": "e4dd08e4-c9f9-4617-8807-085dd155e5c9",
+      "name": "Config",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        260,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SntPostgres_001",
+          "name": "Sentinela Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT generar_buscas() AS nuevas;",
+        "options": {}
+      },
+      "id": "c5a13296-c9d3-4b51-ab00-3dd7ad3e4a6a",
+      "name": "Generar buscas",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        520,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SntPostgres_001",
+          "name": "Sentinela Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT b.id AS busca_id, b.obra_id, b.template AS q, b.es_frase FROM buscas b JOIN obras o ON o.id = b.obra_id WHERE b.ativa AND o.ativa AND b.motor = 'serp' ORDER BY b.id;",
+        "options": {}
+      },
+      "id": "bd1cbad7-0d07-47ab-afc4-872da3177d7e",
+      "name": "Buscas SERP",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        780,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SntPostgres_001",
+          "name": "Sentinela Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.dataforseo.com/v3/serp/google/organic/live/regular",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify([{ keyword: $json.q, location_code: 2076, language_code: 'pt', depth: 10, tag: $json.busca_id + '|' + $json.obra_id + '|' + ($json.es_frase ? 1 : 0) }]) }}",
+        "options": {
+          "timeout": 60000,
+          "batching": {
+            "batch": {
+              "batchSize": 5,
+              "batchInterval": 1000
+            }
+          }
+        }
+      },
+      "id": "93782978-a4fc-403c-be63-1c71db2dda85",
+      "name": "DataForSEO",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1040,
+        0
+      ],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "SntDataForSEO_001",
+          "name": "DataForSEO"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const H = (typeof $helpers !== 'undefined') ? $helpers : this.helpers;\n\nfunction normUrl(u) {\n  try {\n    const x = new URL(String(u).trim());\n    if (x.protocol !== 'http:' && x.protocol !== 'https:') return null;\n    x.hash = '';\n    for (const k of [...x.searchParams.keys()]) {\n      if (/^(utm_|gclid$|fbclid$|ved$|usg$|sa$)/i.test(k)) x.searchParams.delete(k);\n    }\n    x.hostname = x.hostname.toLowerCase().replace(/^www\\./, '');\n    let s = x.toString();\n    if (x.pathname.length > 1 && !x.search && s.endsWith('/')) s = s.slice(0, -1);\n    return s;\n  } catch (e) { return null; }\n}\n\nfunction hostOf(u) {\n  try { return new URL(u).hostname.toLowerCase().replace(/^www\\./, ''); } catch (e) { return ''; }\n}\n\nfunction platformOf(host) {\n  const h = host || '';\n  const is = (d) => h === d || h.endsWith('.' + d);\n  if (is('t.me') || is('telegram.me')) return 'telegram';\n  if (is('scribd.com')) return 'scribd';\n  if (is('docero.com.br') || is('docero.net')) return 'docero';\n  if (is('passeidireto.com')) return 'passeidireto';\n  if (is('4shared.com')) return '4shared';\n  if (is('mediafire.com')) return 'mediafire';\n  if (is('mercadolivre.com.br') || is('mercadolibre.com')) return 'mercadolivre';\n  if (/(^|\\.)amazon\\./.test(h)) return 'amazon';\n  if (is('drive.google.com') || is('docs.google.com')) return 'drive';\n  return 'web';\n}\n\nfunction esc(s) {\n  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n}\n// Entrada: una respuesta de DataForSEO por item. Salida: 1 item con todas las filas para insertar.\nconst rows = [];\nconst buscaIds = new Set();\nconst errores = [];\nfor (const it of $input.all()) {\n  const j = it.json;\n  const task = j && j.tasks && j.tasks[0];\n  if (!task || task.status_code !== 20000) {\n    errores.push((task && task.status_message) || j.status_message || (j.error && (j.error.message || j.error)) || 'respuesta vacía');\n    continue;\n  }\n  const [buscaId, obraId, esFrase] = String((task.data && task.data.tag) || '').split('|');\n  if (!buscaId || !obraId) continue;\n  buscaIds.add(Number(buscaId));\n  const items = (task.result && task.result[0] && task.result[0].items) || [];\n  for (const r of items) {\n    if (r.type !== 'organic' || !r.url) continue;\n    const url = normUrl(r.url);\n    if (!url) continue;\n    rows.push({\n      obra_id: Number(obraId),\n      busca_id: Number(buscaId),\n      url,\n      plataforma: platformOf(hostOf(url)),\n      motor: 'serp',\n      snippet: [r.title, r.description].filter(Boolean).join(' | ').slice(0, 800),\n      es_frase: esFrase === '1',\n    });\n  }\n}\nreturn [{ json: { rows, busca_ids: [...buscaIds], fuente: 'Google (DataForSEO)', consultas: $input.all().length, errores } }];\n"
+      },
+      "id": "5af45755-184b-457b-9d1e-2c654441616f",
+      "name": "Parsear SERP",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH ejec AS (\n  UPDATE buscas SET ultima_execucao = now()\n  WHERE id IN (SELECT jsonb_array_elements_text($2::jsonb)::int)\n  RETURNING id\n), ins AS (\n  INSERT INTO achados (obra_id, busca_id, url, url_hash, plataforma, motor, snippet, es_frase)\n  SELECT DISTINCT ON (r.obra_id, md5(r.url))\n         r.obra_id, r.busca_id, r.url, md5(r.url), r.plataforma, r.motor, left(r.snippet, 1000), coalesce(r.es_frase, false)\n  FROM jsonb_to_recordset($1::jsonb) AS r(obra_id int, busca_id int, url text, plataforma text, motor text, snippet text, es_frase boolean)\n  WHERE EXISTS (SELECT 1 FROM obras o WHERE o.id = r.obra_id)\n  ORDER BY r.obra_id, md5(r.url), r.es_frase DESC\n  ON CONFLICT (obra_id, url_hash) DO UPDATE SET ultimo_visto = now()\n  RETURNING (xmax = 0) AS nuevo\n)\nSELECT count(*) FILTER (WHERE nuevo) AS nuevos, count(*) AS total, (SELECT count(*) FROM ejec) AS buscas_ejecutadas FROM ins;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify($json.rows || []), JSON.stringify($json.busca_ids || [])] }}"
+        }
+      },
+      "id": "09704da6-14e2-4b0c-a724-02b9c85187e8",
+      "name": "Guardar SERP",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1560,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SntPostgres_001",
+          "name": "Sentinela Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, url, obra_id FROM alertas_rss WHERE activa;",
+        "options": {}
+      },
+      "id": "4c39c95d-0d07-4849-8426-361ce5d17c47",
+      "name": "Feeds RSS",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        780,
+        170
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SntPostgres_001",
+          "name": "Sentinela Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "responseFormat": "text",
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "8154bc3c-4e7e-4de2-be7a-d65633402476",
+      "name": "Bajar feed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1040,
+        170
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "4a0fea36-cb1a-4626-8695-ee15366dcd69",
+      "name": "Unir feed",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1300,
+        170
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const H = (typeof $helpers !== 'undefined') ? $helpers : this.helpers;\n\nfunction normUrl(u) {\n  try {\n    const x = new URL(String(u).trim());\n    if (x.protocol !== 'http:' && x.protocol !== 'https:') return null;\n    x.hash = '';\n    for (const k of [...x.searchParams.keys()]) {\n      if (/^(utm_|gclid$|fbclid$|ved$|usg$|sa$)/i.test(k)) x.searchParams.delete(k);\n    }\n    x.hostname = x.hostname.toLowerCase().replace(/^www\\./, '');\n    let s = x.toString();\n    if (x.pathname.length > 1 && !x.search && s.endsWith('/')) s = s.slice(0, -1);\n    return s;\n  } catch (e) { return null; }\n}\n\nfunction hostOf(u) {\n  try { return new URL(u).hostname.toLowerCase().replace(/^www\\./, ''); } catch (e) { return ''; }\n}\n\nfunction platformOf(host) {\n  const h = host || '';\n  const is = (d) => h === d || h.endsWith('.' + d);\n  if (is('t.me') || is('telegram.me')) return 'telegram';\n  if (is('scribd.com')) return 'scribd';\n  if (is('docero.com.br') || is('docero.net')) return 'docero';\n  if (is('passeidireto.com')) return 'passeidireto';\n  if (is('4shared.com')) return '4shared';\n  if (is('mediafire.com')) return 'mediafire';\n  if (is('mercadolivre.com.br') || is('mercadolibre.com')) return 'mercadolivre';\n  if (/(^|\\.)amazon\\./.test(h)) return 'amazon';\n  if (is('drive.google.com') || is('docs.google.com')) return 'drive';\n  return 'web';\n}\n\nfunction esc(s) {\n  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n}\n// Entrada (Merge por posición): fila de alertas_rss (obra_id) + respuesta de texto del feed en `data`.\nconst rows = [];\nconst errores = [];\nfor (const it of $input.all()) {\n  const j = it.json;\n  const xml = String(j.data || '');\n  if (j.error || !xml.includes('<feed')) {\n    errores.push(`feed ${j.id}: ${(j.error && (j.error.message || j.error)) || 'no es un feed Atom'}`);\n    continue;\n  }\n  const entries = xml.split('<entry>').slice(1);\n  for (const e of entries) {\n    const link = (e.match(/<link[^>]*href=\"([^\"]+)\"/) || [])[1];\n    if (!link) continue;\n    let real = link.replace(/&amp;/g, '&');\n    try {\n      const u = new URL(real);\n      const inner = u.searchParams.get('url');\n      if (inner) real = inner;\n    } catch (err) { /* link directo */ }\n    const url = normUrl(real);\n    if (!url) continue;\n    const title = ((e.match(/<title[^>]*>([\\s\\S]*?)<\\/title>/) || [])[1] || '').replace(/&lt;[^&]*&gt;/g, '').replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').trim();\n    const body = ((e.match(/<content[^>]*>([\\s\\S]*?)<\\/content>/) || [])[1] || '').replace(/&lt;[^&]*&gt;/g, ' ').replace(/<[^>]+>/g, ' ').replace(/\\s+/g, ' ');\n    rows.push({\n      obra_id: Number(j.obra_id),\n      busca_id: null,\n      url,\n      plataforma: platformOf(hostOf(url)),\n      motor: 'google_alerts',\n      snippet: [title, body].filter(Boolean).join(' | ').slice(0, 800),\n      es_frase: false,\n    });\n  }\n}\nreturn [{ json: { rows, fuente: 'Google Alerts', consultas: $input.all().length, errores } }];\n"
+      },
+      "id": "255f736a-656b-437e-b468-351429f80003",
+      "name": "Parsear RSS",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        170
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH ejec AS (\n  UPDATE buscas SET ultima_execucao = now()\n  WHERE id IN (SELECT jsonb_array_elements_text($2::jsonb)::int)\n  RETURNING id\n), ins AS (\n  INSERT INTO achados (obra_id, busca_id, url, url_hash, plataforma, motor, snippet, es_frase)\n  SELECT DISTINCT ON (r.obra_id, md5(r.url))\n         r.obra_id, r.busca_id, r.url, md5(r.url), r.plataforma, r.motor, left(r.snippet, 1000), coalesce(r.es_frase, false)\n  FROM jsonb_to_recordset($1::jsonb) AS r(obra_id int, busca_id int, url text, plataforma text, motor text, snippet text, es_frase boolean)\n  WHERE EXISTS (SELECT 1 FROM obras o WHERE o.id = r.obra_id)\n  ORDER BY r.obra_id, md5(r.url), r.es_frase DESC\n  ON CONFLICT (obra_id, url_hash) DO UPDATE SET ultimo_visto = now()\n  RETURNING (xmax = 0) AS nuevo\n)\nSELECT count(*) FILTER (WHERE nuevo) AS nuevos, count(*) AS total, (SELECT count(*) FROM ejec) AS buscas_ejecutadas FROM ins;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify($json.rows || []), JSON.stringify($json.busca_ids || [])] }}"
+        }
+      },
+      "id": "2396a361-d69a-46ef-bb6f-697a869a9b41",
+      "name": "Guardar RSS",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1820,
+        170
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SntPostgres_001",
+          "name": "Sentinela Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT b.id AS busca_id, b.obra_id, b.template AS q, b.es_frase FROM buscas b JOIN obras o ON o.id = b.obra_id WHERE b.ativa AND o.ativa AND b.motor = 'telegram' ORDER BY b.id;",
+        "options": {}
+      },
+      "id": "7b3fc477-49c2-43d9-abfc-3a3411bbae3d",
+      "name": "Buscas Telegram",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        780,
+        340
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SntPostgres_001",
+          "name": "Sentinela Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://sentinela:8088/buscar",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 180000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 3000
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ query: $json.q, limit: 30 }) }}"
+      },
+      "id": "810f46c5-30d8-429e-98f5-1951ab3a2f37",
+      "name": "Sentinela buscar",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1040,
+        340
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "SntApiKey_001",
+          "name": "Sentinela API Key"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "b6328f8c-1c66-4b52-9f0f-5d371cbf54f9",
+      "name": "Unir Telegram",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1300,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const H = (typeof $helpers !== 'undefined') ? $helpers : this.helpers;\n\nfunction normUrl(u) {\n  try {\n    const x = new URL(String(u).trim());\n    if (x.protocol !== 'http:' && x.protocol !== 'https:') return null;\n    x.hash = '';\n    for (const k of [...x.searchParams.keys()]) {\n      if (/^(utm_|gclid$|fbclid$|ved$|usg$|sa$)/i.test(k)) x.searchParams.delete(k);\n    }\n    x.hostname = x.hostname.toLowerCase().replace(/^www\\./, '');\n    let s = x.toString();\n    if (x.pathname.length > 1 && !x.search && s.endsWith('/')) s = s.slice(0, -1);\n    return s;\n  } catch (e) { return null; }\n}\n\nfunction hostOf(u) {\n  try { return new URL(u).hostname.toLowerCase().replace(/^www\\./, ''); } catch (e) { return ''; }\n}\n\nfunction platformOf(host) {\n  const h = host || '';\n  const is = (d) => h === d || h.endsWith('.' + d);\n  if (is('t.me') || is('telegram.me')) return 'telegram';\n  if (is('scribd.com')) return 'scribd';\n  if (is('docero.com.br') || is('docero.net')) return 'docero';\n  if (is('passeidireto.com')) return 'passeidireto';\n  if (is('4shared.com')) return '4shared';\n  if (is('mediafire.com')) return 'mediafire';\n  if (is('mercadolivre.com.br') || is('mercadolibre.com')) return 'mercadolivre';\n  if (/(^|\\.)amazon\\./.test(h)) return 'amazon';\n  if (is('drive.google.com') || is('docs.google.com')) return 'drive';\n  return 'web';\n}\n\nfunction esc(s) {\n  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n}\n// Entrada (Merge por posición): busca (busca_id, obra_id, es_frase) + respuesta de /buscar (resultados).\nconst rows = [];\nconst buscaIds = [];\nconst errores = [];\nconst SOSPECHOSO = /\\.(pdf|epub|mobi|azw3?)\\b|baixar|download|drive\\.google|mega\\.nz|t\\.me\\/\\+/i;\nfor (const it of $input.all()) {\n  const j = it.json;\n  if (!Array.isArray(j.resultados) || !j.busca_id) {   // error de la llamada: se reintenta mañana\n    errores.push((j.error && (j.error.message || j.error)) || j.detail || 'sin resultados del servicio');\n    continue;\n  }\n  buscaIds.push(Number(j.busca_id));\n  for (const r of j.resultados) {\n    const texto = r.texto || '';\n    const sospechoso = r.es_libro || SOSPECHOSO.test(texto + ' ' + (r.archivo || ''));\n    if (!(sospechoso || j.es_frase)) continue;\n    rows.push({\n      obra_id: Number(j.obra_id),\n      busca_id: Number(j.busca_id),\n      url: r.url,\n      plataforma: 'telegram',\n      motor: 'telegram',\n      snippet: [r.canal_titulo, r.archivo, texto].filter(Boolean).join(' | ').slice(0, 800),\n      es_frase: !!j.es_frase,\n    });\n  }\n}\nreturn [{ json: { rows, busca_ids: buscaIds, fuente: 'Telegram (cuenta sentinela)', consultas: $input.all().length, errores } }];\n"
+      },
+      "id": "51672418-26d8-45f3-9cbf-a4f4a14abc99",
+      "name": "Parsear Telegram",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH ejec AS (\n  UPDATE buscas SET ultima_execucao = now()\n  WHERE id IN (SELECT jsonb_array_elements_text($2::jsonb)::int)\n  RETURNING id\n), ins AS (\n  INSERT INTO achados (obra_id, busca_id, url, url_hash, plataforma, motor, snippet, es_frase)\n  SELECT DISTINCT ON (r.obra_id, md5(r.url))\n         r.obra_id, r.busca_id, r.url, md5(r.url), r.plataforma, r.motor, left(r.snippet, 1000), coalesce(r.es_frase, false)\n  FROM jsonb_to_recordset($1::jsonb) AS r(obra_id int, busca_id int, url text, plataforma text, motor text, snippet text, es_frase boolean)\n  WHERE EXISTS (SELECT 1 FROM obras o WHERE o.id = r.obra_id)\n  ORDER BY r.obra_id, md5(r.url), r.es_frase DESC\n  ON CONFLICT (obra_id, url_hash) DO UPDATE SET ultimo_visto = now()\n  RETURNING (xmax = 0) AS nuevo\n)\nSELECT count(*) FILTER (WHERE nuevo) AS nuevos, count(*) AS total, (SELECT count(*) FROM ejec) AS buscas_ejecutadas FROM ins;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify($json.rows || []), JSON.stringify($json.busca_ids || [])] }}"
+        }
+      },
+      "id": "3fa8c86a-9a16-4fc6-8d32-4c2f3dd89052",
+      "name": "Guardar Telegram",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1820,
+        340
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SntPostgres_001",
+          "name": "Sentinela Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT c.username, o.id AS obra_id, o.titulo FROM canales_publicos c CROSS JOIN obras o WHERE c.activo AND o.ativa ORDER BY c.username, o.id;",
+        "options": {}
+      },
+      "id": "b2552322-bf08-4291-a84f-a0c6aabbb5bb",
+      "name": "Canales x obras",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        780,
+        510
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SntPostgres_001",
+          "name": "Sentinela Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://t.me/s/' + $json.username + '?q=' + encodeURIComponent($json.titulo) }}",
+        "options": {
+          "timeout": 30000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 3000
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "text",
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "cc01da99-904b-41d5-b809-67e8393c85c1",
+      "name": "Bajar canal publico",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1040,
+        510
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "7a713672-3fa1-40d4-b3b5-8d4319a43a10",
+      "name": "Unir canal publico",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1300,
+        510
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const H = (typeof $helpers !== 'undefined') ? $helpers : this.helpers;\n\nfunction normUrl(u) {\n  try {\n    const x = new URL(String(u).trim());\n    if (x.protocol !== 'http:' && x.protocol !== 'https:') return null;\n    x.hash = '';\n    for (const k of [...x.searchParams.keys()]) {\n      if (/^(utm_|gclid$|fbclid$|ved$|usg$|sa$)/i.test(k)) x.searchParams.delete(k);\n    }\n    x.hostname = x.hostname.toLowerCase().replace(/^www\\./, '');\n    let s = x.toString();\n    if (x.pathname.length > 1 && !x.search && s.endsWith('/')) s = s.slice(0, -1);\n    return s;\n  } catch (e) { return null; }\n}\n\nfunction hostOf(u) {\n  try { return new URL(u).hostname.toLowerCase().replace(/^www\\./, ''); } catch (e) { return ''; }\n}\n\nfunction platformOf(host) {\n  const h = host || '';\n  const is = (d) => h === d || h.endsWith('.' + d);\n  if (is('t.me') || is('telegram.me')) return 'telegram';\n  if (is('scribd.com')) return 'scribd';\n  if (is('docero.com.br') || is('docero.net')) return 'docero';\n  if (is('passeidireto.com')) return 'passeidireto';\n  if (is('4shared.com')) return '4shared';\n  if (is('mediafire.com')) return 'mediafire';\n  if (is('mercadolivre.com.br') || is('mercadolibre.com')) return 'mercadolivre';\n  if (/(^|\\.)amazon\\./.test(h)) return 'amazon';\n  if (is('drive.google.com') || is('docs.google.com')) return 'drive';\n  return 'web';\n}\n\nfunction esc(s) {\n  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n}\n// Entrada (Merge por posición): {username, obra_id, titulo} + HTML de t.me/s/<canal>?q=<titulo> en `data`.\nconst norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');\nconst strip = (h) => String(h || '').replace(/<br\\s*\\/?>/g, ' ').replace(/<[^>]+>/g, ' ')\n  .replace(/&amp;/g, '&').replace(/&quot;/g, '\"').replace(/&#39;/g, \"'\").replace(/\\s+/g, ' ').trim();\nconst rows = [];\nconst errores = [];\nfor (const it of $input.all()) {\n  const j = it.json;\n  const html = String(j.data || '');\n  if (j.error || !html) {\n    errores.push(`@${j.username}: ${(j.error && (j.error.message || j.error)) || 'página sin vista pública'}`);\n    continue;\n  }\n  const blocks = html.split('tgme_widget_message_wrap').slice(1);\n  for (const b of blocks) {\n    const post = (b.match(/data-post=\"([^\"]+)\"/) || [])[1];\n    if (!post) continue;\n    const tm = b.match(/class=\"tgme_widget_message_text[^\"]*\"[^>]*>([\\s\\S]*?)<\\/div>/);\n    const doc = b.match(/class=\"tgme_widget_message_document_title[^\"]*\"[^>]*>([\\s\\S]*?)<\\/div>/);\n    const text = [doc && strip(doc[1]), tm && strip(tm[1])].filter(Boolean).join(' | ');\n    if (!text || !norm(text).includes(norm(j.titulo))) continue;\n    rows.push({\n      obra_id: Number(j.obra_id),\n      busca_id: null,\n      url: `https://t.me/${post}`,\n      plataforma: 'telegram',\n      motor: 'telegram_public',\n      snippet: text.slice(0, 800),\n      es_frase: false,\n    });\n  }\n}\nreturn [{ json: { rows, fuente: 'Telegram (canales públicos)', consultas: $input.all().length, errores } }];\n"
+      },
+      "id": "96330d12-4e42-4ff0-b536-d562eb331ad4",
+      "name": "Parsear canal publico",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        510
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH ejec AS (\n  UPDATE buscas SET ultima_execucao = now()\n  WHERE id IN (SELECT jsonb_array_elements_text($2::jsonb)::int)\n  RETURNING id\n), ins AS (\n  INSERT INTO achados (obra_id, busca_id, url, url_hash, plataforma, motor, snippet, es_frase)\n  SELECT DISTINCT ON (r.obra_id, md5(r.url))\n         r.obra_id, r.busca_id, r.url, md5(r.url), r.plataforma, r.motor, left(r.snippet, 1000), coalesce(r.es_frase, false)\n  FROM jsonb_to_recordset($1::jsonb) AS r(obra_id int, busca_id int, url text, plataforma text, motor text, snippet text, es_frase boolean)\n  WHERE EXISTS (SELECT 1 FROM obras o WHERE o.id = r.obra_id)\n  ORDER BY r.obra_id, md5(r.url), r.es_frase DESC\n  ON CONFLICT (obra_id, url_hash) DO UPDATE SET ultimo_visto = now()\n  RETURNING (xmax = 0) AS nuevo\n)\nSELECT count(*) FILTER (WHERE nuevo) AS nuevos, count(*) AS total, (SELECT count(*) FROM ejec) AS buscas_ejecutadas FROM ins;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify($json.rows || []), JSON.stringify($json.busca_ids || [])] }}"
+        }
+      },
+      "id": "81f0fa32-06ac-4fd5-9c98-accba9925b49",
+      "name": "Guardar canal publico",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1820,
+        510
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SntPostgres_001",
+          "name": "Sentinela Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const H = (typeof $helpers !== 'undefined') ? $helpers : this.helpers;\n\nfunction normUrl(u) {\n  try {\n    const x = new URL(String(u).trim());\n    if (x.protocol !== 'http:' && x.protocol !== 'https:') return null;\n    x.hash = '';\n    for (const k of [...x.searchParams.keys()]) {\n      if (/^(utm_|gclid$|fbclid$|ved$|usg$|sa$)/i.test(k)) x.searchParams.delete(k);\n    }\n    x.hostname = x.hostname.toLowerCase().replace(/^www\\./, '');\n    let s = x.toString();\n    if (x.pathname.length > 1 && !x.search && s.endsWith('/')) s = s.slice(0, -1);\n    return s;\n  } catch (e) { return null; }\n}\n\nfunction hostOf(u) {\n  try { return new URL(u).hostname.toLowerCase().replace(/^www\\./, ''); } catch (e) { return ''; }\n}\n\nfunction platformOf(host) {\n  const h = host || '';\n  const is = (d) => h === d || h.endsWith('.' + d);\n  if (is('t.me') || is('telegram.me')) return 'telegram';\n  if (is('scribd.com')) return 'scribd';\n  if (is('docero.com.br') || is('docero.net')) return 'docero';\n  if (is('passeidireto.com')) return 'passeidireto';\n  if (is('4shared.com')) return '4shared';\n  if (is('mediafire.com')) return 'mediafire';\n  if (is('mercadolivre.com.br') || is('mercadolibre.com')) return 'mercadolivre';\n  if (/(^|\\.)amazon\\./.test(h)) return 'amazon';\n  if (is('drive.google.com') || is('docs.google.com')) return 'drive';\n  return 'web';\n}\n\nfunction esc(s) {\n  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n}\n// Entrada: salida de un parser de detección (fuente, consultas, errores[]). Avisa si alguna consulta falló,\n// porque los nodos HTTP siguen de largo ante errores y el workflow 00 no se entera (crédito agotado, sesión caída...).\nconst cfg = $('Config').first().json.cfg || {};\nconst chat = String(cfg.telegram_admin_chat_id || '').trim();\nconst j = $input.first().json || {};\nconst errores = j.errores || [];\nif (!chat || !errores.length) return [];\nconst distintos = [...new Set(errores.map((e) => String(e).slice(0, 160)))].slice(0, 3);\nreturn [{\n  json: {\n    chat_id: chat,\n    texto: `⚠️ <b>Detección · ${esc(j.fuente)}</b>: fallaron ${errores.length} de ${j.consultas} consultas.\\n`\n      + distintos.map((e) => `• ${esc(e)}`).join('\\n'),\n  },\n}];\n"
+      },
+      "id": "dffd0eda-7b2b-4a12-89b9-fdd473c6c020",
+      "name": "Errores SERP",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        680
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.texto }}",
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "appendAttribution": false,
+          "disable_web_page_preview": true
+        }
+      },
+      "id": "b91c2589-03f2-4363-b8df-c6ba453cd517",
+      "name": "Avisar errores SERP",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1820,
+        680
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "SntTelegram_001",
+          "name": "Sentinela Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const H = (typeof $helpers !== 'undefined') ? $helpers : this.helpers;\n\nfunction normUrl(u) {\n  try {\n    const x = new URL(String(u).trim());\n    if (x.protocol !== 'http:' && x.protocol !== 'https:') return null;\n    x.hash = '';\n    for (const k of [...x.searchParams.keys()]) {\n      if (/^(utm_|gclid$|fbclid$|ved$|usg$|sa$)/i.test(k)) x.searchParams.delete(k);\n    }\n    x.hostname = x.hostname.toLowerCase().replace(/^www\\./, '');\n    let s = x.toString();\n    if (x.pathname.length > 1 && !x.search && s.endsWith('/')) s = s.slice(0, -1);\n    return s;\n  } catch (e) { return null; }\n}\n\nfunction hostOf(u) {\n  try { return new URL(u).hostname.toLowerCase().replace(/^www\\./, ''); } catch (e) { return ''; }\n}\n\nfunction platformOf(host) {\n  const h = host || '';\n  const is = (d) => h === d || h.endsWith('.' + d);\n  if (is('t.me') || is('telegram.me')) return 'telegram';\n  if (is('scribd.com')) return 'scribd';\n  if (is('docero.com.br') || is('docero.net')) return 'docero';\n  if (is('passeidireto.com')) return 'passeidireto';\n  if (is('4shared.com')) return '4shared';\n  if (is('mediafire.com')) return 'mediafire';\n  if (is('mercadolivre.com.br') || is('mercadolibre.com')) return 'mercadolivre';\n  if (/(^|\\.)amazon\\./.test(h)) return 'amazon';\n  if (is('drive.google.com') || is('docs.google.com')) return 'drive';\n  return 'web';\n}\n\nfunction esc(s) {\n  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n}\n// Entrada: salida de un parser de detección (fuente, consultas, errores[]). Avisa si alguna consulta falló,\n// porque los nodos HTTP siguen de largo ante errores y el workflow 00 no se entera (crédito agotado, sesión caída...).\nconst cfg = $('Config').first().json.cfg || {};\nconst chat = String(cfg.telegram_admin_chat_id || '').trim();\nconst j = $input.first().json || {};\nconst errores = j.errores || [];\nif (!chat || !errores.length) return [];\nconst distintos = [...new Set(errores.map((e) => String(e).slice(0, 160)))].slice(0, 3);\nreturn [{\n  json: {\n    chat_id: chat,\n    texto: `⚠️ <b>Detección · ${esc(j.fuente)}</b>: fallaron ${errores.length} de ${j.consultas} consultas.\\n`\n      + distintos.map((e) => `• ${esc(e)}`).join('\\n'),\n  },\n}];\n"
+      },
+      "id": "5bb58aa4-0f56-44b7-97ca-b4d47d870698",
+      "name": "Errores RSS",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        850
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.texto }}",
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "appendAttribution": false,
+          "disable_web_page_preview": true
+        }
+      },
+      "id": "b264db08-a2e5-4d15-bc6f-f625cbd35d20",
+      "name": "Avisar errores RSS",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1820,
+        850
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "SntTelegram_001",
+          "name": "Sentinela Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const H = (typeof $helpers !== 'undefined') ? $helpers : this.helpers;\n\nfunction normUrl(u) {\n  try {\n    const x = new URL(String(u).trim());\n    if (x.protocol !== 'http:' && x.protocol !== 'https:') return null;\n    x.hash = '';\n    for (const k of [...x.searchParams.keys()]) {\n      if (/^(utm_|gclid$|fbclid$|ved$|usg$|sa$)/i.test(k)) x.searchParams.delete(k);\n    }\n    x.hostname = x.hostname.toLowerCase().replace(/^www\\./, '');\n    let s = x.toString();\n    if (x.pathname.length > 1 && !x.search && s.endsWith('/')) s = s.slice(0, -1);\n    return s;\n  } catch (e) { return null; }\n}\n\nfunction hostOf(u) {\n  try { return new URL(u).hostname.toLowerCase().replace(/^www\\./, ''); } catch (e) { return ''; }\n}\n\nfunction platformOf(host) {\n  const h = host || '';\n  const is = (d) => h === d || h.endsWith('.' + d);\n  if (is('t.me') || is('telegram.me')) return 'telegram';\n  if (is('scribd.com')) return 'scribd';\n  if (is('docero.com.br') || is('docero.net')) return 'docero';\n  if (is('passeidireto.com')) return 'passeidireto';\n  if (is('4shared.com')) return '4shared';\n  if (is('mediafire.com')) return 'mediafire';\n  if (is('mercadolivre.com.br') || is('mercadolibre.com')) return 'mercadolivre';\n  if (/(^|\\.)amazon\\./.test(h)) return 'amazon';\n  if (is('drive.google.com') || is('docs.google.com')) return 'drive';\n  return 'web';\n}\n\nfunction esc(s) {\n  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n}\n// Entrada: salida de un parser de detección (fuente, consultas, errores[]). Avisa si alguna consulta falló,\n// porque los nodos HTTP siguen de largo ante errores y el workflow 00 no se entera (crédito agotado, sesión caída...).\nconst cfg = $('Config').first().json.cfg || {};\nconst chat = String(cfg.telegram_admin_chat_id || '').trim();\nconst j = $input.first().json || {};\nconst errores = j.errores || [];\nif (!chat || !errores.length) return [];\nconst distintos = [...new Set(errores.map((e) => String(e).slice(0, 160)))].slice(0, 3);\nreturn [{\n  json: {\n    chat_id: chat,\n    texto: `⚠️ <b>Detección · ${esc(j.fuente)}</b>: fallaron ${errores.length} de ${j.consultas} consultas.\\n`\n      + distintos.map((e) => `• ${esc(e)}`).join('\\n'),\n  },\n}];\n"
+      },
+      "id": "b3b5d87f-2852-4df1-9952-a88e78da8aa8",
+      "name": "Errores Telegram",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        1020
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.texto }}",
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "appendAttribution": false,
+          "disable_web_page_preview": true
+        }
+      },
+      "id": "c780baf8-6a28-4128-ba25-344546464222",
+      "name": "Avisar errores Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1820,
+        1020
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "SntTelegram_001",
+          "name": "Sentinela Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const H = (typeof $helpers !== 'undefined') ? $helpers : this.helpers;\n\nfunction normUrl(u) {\n  try {\n    const x = new URL(String(u).trim());\n    if (x.protocol !== 'http:' && x.protocol !== 'https:') return null;\n    x.hash = '';\n    for (const k of [...x.searchParams.keys()]) {\n      if (/^(utm_|gclid$|fbclid$|ved$|usg$|sa$)/i.test(k)) x.searchParams.delete(k);\n    }\n    x.hostname = x.hostname.toLowerCase().replace(/^www\\./, '');\n    let s = x.toString();\n    if (x.pathname.length > 1 && !x.search && s.endsWith('/')) s = s.slice(0, -1);\n    return s;\n  } catch (e) { return null; }\n}\n\nfunction hostOf(u) {\n  try { return new URL(u).hostname.toLowerCase().replace(/^www\\./, ''); } catch (e) { return ''; }\n}\n\nfunction platformOf(host) {\n  const h = host || '';\n  const is = (d) => h === d || h.endsWith('.' + d);\n  if (is('t.me') || is('telegram.me')) return 'telegram';\n  if (is('scribd.com')) return 'scribd';\n  if (is('docero.com.br') || is('docero.net')) return 'docero';\n  if (is('passeidireto.com')) return 'passeidireto';\n  if (is('4shared.com')) return '4shared';\n  if (is('mediafire.com')) return 'mediafire';\n  if (is('mercadolivre.com.br') || is('mercadolibre.com')) return 'mercadolivre';\n  if (/(^|\\.)amazon\\./.test(h)) return 'amazon';\n  if (is('drive.google.com') || is('docs.google.com')) return 'drive';\n  return 'web';\n}\n\nfunction esc(s) {\n  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n}\n// Entrada: salida de un parser de detección (fuente, consultas, errores[]). Avisa si alguna consulta falló,\n// porque los nodos HTTP siguen de largo ante errores y el workflow 00 no se entera (crédito agotado, sesión caída...).\nconst cfg = $('Config').first().json.cfg || {};\nconst chat = String(cfg.telegram_admin_chat_id || '').trim();\nconst j = $input.first().json || {};\nconst errores = j.errores || [];\nif (!chat || !errores.length) return [];\nconst distintos = [...new Set(errores.map((e) => String(e).slice(0, 160)))].slice(0, 3);\nreturn [{\n  json: {\n    chat_id: chat,\n    texto: `⚠️ <b>Detección · ${esc(j.fuente)}</b>: fallaron ${errores.length} de ${j.consultas} consultas.\\n`\n      + distintos.map((e) => `• ${esc(e)}`).join('\\n'),\n  },\n}];\n"
+      },
+      "id": "d44811c8-b0ae-4179-8de2-620104efc8d1",
+      "name": "Errores canal publico",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        1190
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.texto }}",
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "appendAttribution": false,
+          "disable_web_page_preview": true
+        }
+      },
+      "id": "d56fbb1a-3768-4102-9fed-55194b9e73fa",
+      "name": "Avisar errores canal publico",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1820,
+        1190
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "SntTelegram_001",
+          "name": "Sentinela Bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Cron 07:00": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Generar buscas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generar buscas": {
+      "main": [
+        [
+          {
+            "node": "Buscas SERP",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Feeds RSS",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Buscas Telegram",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Canales x obras",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscas SERP": {
+      "main": [
+        [
+          {
+            "node": "DataForSEO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DataForSEO": {
+      "main": [
+        [
+          {
+            "node": "Parsear SERP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parsear SERP": {
+      "main": [
+        [
+          {
+            "node": "Guardar SERP",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Errores SERP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Feeds RSS": {
+      "main": [
+        [
+          {
+            "node": "Bajar feed",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Unir feed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bajar feed": {
+      "main": [
+        [
+          {
+            "node": "Unir feed",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Unir feed": {
+      "main": [
+        [
+          {
+            "node": "Parsear RSS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parsear RSS": {
+      "main": [
+        [
+          {
+            "node": "Guardar RSS",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Errores RSS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscas Telegram": {
+      "main": [
+        [
+          {
+            "node": "Sentinela buscar",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Unir Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sentinela buscar": {
+      "main": [
+        [
+          {
+            "node": "Unir Telegram",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Unir Telegram": {
+      "main": [
+        [
+          {
+            "node": "Parsear Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parsear Telegram": {
+      "main": [
+        [
+          {
+            "node": "Guardar Telegram",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Errores Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Canales x obras": {
+      "main": [
+        [
+          {
+            "node": "Bajar canal publico",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Unir canal publico",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bajar canal publico": {
+      "main": [
+        [
+          {
+            "node": "Unir canal publico",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Unir canal publico": {
+      "main": [
+        [
+          {
+            "node": "Parsear canal publico",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parsear canal publico": {
+      "main": [
+        [
+          {
+            "node": "Guardar canal publico",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Errores canal publico",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Errores SERP": {
+      "main": [
+        [
+          {
+            "node": "Avisar errores SERP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Errores RSS": {
+      "main": [
+        [
+          {
+            "node": "Avisar errores RSS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Errores Telegram": {
+      "main": [
+        [
+          {
+            "node": "Avisar errores Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Errores canal publico": {
+      "main": [
+        [
+          {
+            "node": "Avisar errores canal publico",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Sao_Paulo"
+  },
+  "pinData": {}
+}

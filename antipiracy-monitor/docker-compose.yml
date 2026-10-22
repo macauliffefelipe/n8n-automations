@@ -1,0 +1,38 @@
+# Stack de apoyo para los workflows de n8n. n8n NO está acá: ya lo tenés corriendo en el VPS.
+# Después de levantar esto, conectá tu contenedor de n8n a la red del stack:
+#   docker network connect sentinela_default <nombre_del_contenedor_n8n>
+# y en n8n usás los hostnames: postgres, sentinela, gotenberg.
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sentinela
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: sentinela
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./sql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    # sin puertos publicados: solo accesible desde la red del stack
+
+  sentinela:
+    build: ./sentinela-tg
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      TG_SESSION: /data/sentinela
+      CAPTURAS_DIR: /data/capturas
+    volumes:
+      - ./data:/data
+    ports:
+      - "127.0.0.1:8088:8088"
+    shm_size: "1gb"          # Chromium
+
+  gotenberg:
+    image: gotenberg/gotenberg:8
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+
+volumes:
+  pgdata:

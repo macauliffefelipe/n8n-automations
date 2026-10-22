@@ -1,0 +1,461 @@
+{
+  "name": "Sentinela 04 · Notificaciones",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 10
+            }
+          ]
+        }
+      },
+      "id": "cfb55892-1f15-4f49-8401-582beb939d22",
+      "name": "Cada 10 min",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        170
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "1c9cd74a-f664-469a-a87b-adca654484bf",
+      "name": "Manual",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT jsonb_object_agg(chave, valor) AS cfg FROM config;",
+        "options": {}
+      },
+      "id": "7b9752a1-6f6e-4fe6-83bd-533fee4ea195",
+      "name": "Config",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        260,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SntPostgres_001",
+          "name": "Sentinela Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT DISTINCT d AS dominio FROM (\n  SELECT lower(substring(a.url FROM '^https?://(?:www\\.)?([^/:?#]+)')) AS d\n  FROM achados a\n  WHERE a.status = 'confirmado' AND a.plataforma NOT IN ('telegram', 'mercadolivre', 'amazon')\n) x\nWHERE d IS NOT NULL\n  AND NOT EXISTS (SELECT 1 FROM dominios dm WHERE dm.dominio = x.d AND dm.consultado_em > now() - interval '30 days')\nLIMIT 20;",
+        "options": {}
+      },
+      "id": "e7e75705-34a9-4d44-83c5-f0083e918ea5",
+      "name": "Dominios sin consultar",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        520,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SntPostgres_001",
+          "name": "Sentinela Postgres"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const H = (typeof $helpers !== 'undefined') ? $helpers : this.helpers;\n\nfunction normUrl(u) {\n  try {\n    const x = new URL(String(u).trim());\n    if (x.protocol !== 'http:' && x.protocol !== 'https:') return null;\n    x.hash = '';\n    for (const k of [...x.searchParams.keys()]) {\n      if (/^(utm_|gclid$|fbclid$|ved$|usg$|sa$)/i.test(k)) x.searchParams.delete(k);\n    }\n    x.hostname = x.hostname.toLowerCase().replace(/^www\\./, '');\n    let s = x.toString();\n    if (x.pathname.length > 1 && !x.search && s.endsWith('/')) s = s.slice(0, -1);\n    return s;\n  } catch (e) { return null; }\n}\n\nfunction hostOf(u) {\n  try { return new URL(u).hostname.toLowerCase().replace(/^www\\./, ''); } catch (e) { return ''; }\n}\n\nfunction platformOf(host) {\n  const h = host || '';\n  const is = (d) => h === d || h.endsWith('.' + d);\n  if (is('t.me') || is('telegram.me')) return 'telegram';\n  if (is('scribd.com')) return 'scribd';\n  if (is('docero.com.br') || is('docero.net')) return 'docero';\n  if (is('passeidireto.com')) return 'passeidireto';\n  if (is('4shared.com')) return '4shared';\n  if (is('mediafire.com')) return 'mediafire';\n  if (is('mercadolivre.com.br') || is('mercadolibre.com')) return 'mercadolivre';\n  if (/(^|\\.)amazon\\./.test(h)) return 'amazon';\n  if (is('drive.google.com') || is('docs.google.com')) return 'drive';\n  return 'web';\n}\n\nfunction esc(s) {\n  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n}\n// Para cada dominio: DNS (DoH) -> RDAP de la IP (abuse del host, Cloudflare) -> RDAP del dominio (abuse del registrador).\nconst sleep = (ms) => new Promise((r) => setTimeout(r, ms));\nconst get = (url) => H.httpRequest({ method: 'GET', url, json: true, timeout: 12000,\n  headers: { Accept: 'application/rdap+json, application/json' } });\n\nfunction abuseEmail(rdap) {\n  const found = [];\n  const walk = (ents) => {\n    for (const e of ents || []) {\n      if ((e.roles || []).includes('abuse')) {\n        for (const f of ((e.vcardArray || [])[1]) || []) {\n          if (f[0] === 'email' && f[3]) found.push(String(f[3]));\n        }\n      }\n      walk(e.entities);\n    }\n  };\n  walk(rdap && rdap.entities);\n  return found[0] || null;\n}\n\nfunction registrable(host) {\n  const p = host.split('.');\n  if (p.length <= 2) return host;\n  const SLD = new Set(['com', 'org', 'net', 'gov', 'edu', 'co', 'ne', 'or', 'ac', 'mil']);\n  if (p[p.length - 1].length === 2 && SLD.has(p[p.length - 2])) return p.slice(-3).join('.');\n  return p.slice(-2).join('.');\n}\n\nconst rows = [];\nfor (const it of $input.all()) {\n  const dominio = String(it.json.dominio || '').toLowerCase();\n  if (!dominio) continue;\n  let ip = null, hostNome = null, abuseHost = null, cf = false, registrar = null, abuseReg = null;\n  try {\n    const d = await get(`https://dns.google/resolve?name=${encodeURIComponent(dominio)}&type=A`);\n    const a = (d.Answer || []).find((x) => x.type === 1);\n    ip = a ? a.data : null;\n  } catch (e) { /* sin DNS */ }\n  if (ip) {\n    try {\n      const r = await get(`https://rdap.org/ip/${ip}`);\n      hostNome = r.name || r.handle || null;\n      abuseHost = abuseEmail(r);\n      cf = /cloudflare/i.test(`${r.name || ''} ${r.handle || ''}`);\n    } catch (e) { /* RDAP no disponible */ }\n  }\n  try {\n    const r = await get(`https://rdap.org/domain/${registrable(dominio)}`);\n    abuseReg = abuseEmail(r);\n    const reg = (r.entities || []).find((e) => (e.roles || []).includes('registrar'));\n    const fn = reg && ((reg.vcardArray || [])[1] || []).find((f) => f[0] === 'fn');\n    registrar = fn ? fn[3] : null;\n  } catch (e) { /* RDAP no disponible */ }\n  rows.push({ dominio, ip, host_nome: hostNome, abuse_host_email: abuseHost, registrar, abuse_registrar_email: abuseReg, cloudflare: cf });\n  await sleep(400);\n}\nreturn [{ json: { rows } }];\n"
+      },
+      "id": "3fb8c20d-db90-4d9f-993a-861770e99213",
+      "name": "Consultar DNS y RDAP",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO dominios (dominio, ip, host_nome, abuse_host_email, registrar, abuse_registrar_email, cloudflare)\nSELECT r.dominio, r.ip, r.host_nome, r.abuse_host_email, r.registrar, r.abuse_registrar_email, coalesce(r.cloudflare, false)\nFROM jsonb_to_recordset($1::jsonb) AS r(dominio text, ip text, host_nome text, abuse_host_email text, registrar text, abuse_registrar_email text, cloudflare boolean)\nON CONFLICT (dominio) DO UPDATE SET ip = EXCLUDED.ip, host_nome = EXCLUDED.host_nome,\n  abuse_host_email = EXCLUDED.abuse_host_email, registrar = EXCLUDED.registrar,\n  abuse_registrar_email = EXCLUDED.abuse_registrar_email, cloudflare = EXCLUDED.cloudflare, consultado_em = now()\nRETURNING dominio;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify($json.rows || [])] }}"
+        }
+      },
+      "id": "00ed6cd8-2c27-4307-98e5-f3f6c2913979",
+      "name": "Guardar dominios",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1040,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SntPostgres_001",
+          "name": "Sentinela Postgres"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { ok: true } }];"
+      },
+      "id": "28d95b27-30dd-422d-9531-43757b4c2e46",
+      "name": "Continuar una vez",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1170.0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT a.id, a.url, a.plataforma, a.nivel_escalado, a.notificado_em,\n       o.titulo AS obra_titulo, o.isbn, o.urls_oficiais,\n       c.id AS cliente_id, c.nome_autoral,\n       lower(substring(a.url FROM '^https?://(?:www\\.)?([^/:?#]+)')) AS dominio,\n       d.abuse_host_email, d.abuse_registrar_email, coalesce(d.cloudflare, false) AS cloudflare\nFROM achados a\nJOIN obras o ON o.id = a.obra_id\nJOIN clientes c ON c.id = o.cliente_id\nLEFT JOIN dominios d ON d.dominio = lower(substring(a.url FROM '^https?://(?:www\\.)?([^/:?#]+)'))\nWHERE a.status = 'confirmado'\n  AND c.assinado_em IS NOT NULL\n  AND NOT EXISTS (SELECT 1 FROM notificacoes n\n                  WHERE a.id = ANY (n.achado_ids) AND n.nivel = a.nivel_escalado AND n.status <> 'cancelada')\nORDER BY a.id\nLIMIT 200;",
+        "options": {}
+      },
+      "id": "52135127-2406-4cdf-9101-9b710e36dcd1",
+      "name": "Confirmados a notificar",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1300,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SntPostgres_001",
+          "name": "Sentinela Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Entrada: hallazgos confirmados sin notificación en su nivel. Salida: 1 item con las notificaciones a insertar.\n// Email = se arma y espera tu botón (o sale solo si config.auto_email = true y dry_run = false).\n// Google, Cloudflare, marketplaces y sitios con formulario propio = bloque listo para pegar, envío SIEMPRE humano.\nconst cfg = $('Config').first().json.cfg || {};\nconst auto = cfg.auto_email === 'true';\nconst ag = {\n  nome: cfg.agente_nome || '[NOME DO AGENTE]',\n  email: cfg.agente_email || '[EMAIL DO AGENTE]',\n  endereco: cfg.agente_endereco || '[ENDEREÇO DO AGENTE]',\n};\nconst items = $input.all().map((i) => i.json);\nconst rows = [];\n\nconst uniq = (a) => [...new Set(a.filter(Boolean))];\nconst chunk = (a, n) => { const o = []; for (let i = 0; i < a.length; i += n) o.push(a.slice(i, i + n)); return o; };\nconst groupBy = (arr, fn) => {\n  const m = new Map();\n  for (const x of arr) { const k = fn(x); if (!m.has(k)) m.set(k, []); m.get(k).push(x); }\n  return [...m.values()];\n};\nconst dia = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '(data da primeira notificação)');\nconst MANUAL_WEB = ['scribd', 'docero', 'passeidireto'];\nconst NO_WEB = ['telegram', 'mercadolivre', 'amazon'];\n\nconst obras = (g) => uniq(g.map((x) => x.obra_titulo)).map((t) => `- ${t}`).join('\\n');\nconst oficiais = (g) => uniq(g.flatMap((x) => x.urls_oficiais || [])).map((u) => `- ${u}`).join('\\n') || '- (não informado)';\nconst multi = (g) => uniq(g.map((x) => x.obra_titulo)).length > 1;\nconst urls = (g) => g.map((x) => `- ${x.url}${multi(g) ? `  (obra: ${x.obra_titulo})` : ''}`).join('\\n');\nconst titular = (g) => g[0].nome_autoral;\nconst firma = `${ag.nome}\\n${ag.email}\\n${ag.endereco}\\nAgente autorizado de ${'%TITULAR%'}`;\n\nfunction avisoSeguimiento(g) {\n  if (!(g[0].nivel_escalado > 0)) return '';\n  return `\\nESTA É UMA NOTIFICAÇÃO DE ACOMPANHAMENTO. A primeira notificação foi enviada em ${dia(g[0].notificado_em)} e o conteúdo continua acessível. Solicitamos ação imediata.\\n`;\n}\n\nfunction avisoPt(g, destino) {\n  return `Prezados responsáveis por ${destino},\n${avisoSeguimiento(g)}\nEu, ${ag.nome}, na qualidade de agente autorizado(a) de ${titular(g)}, titular dos direitos autorais das obras abaixo, notifico que o seu serviço hospeda ou disponibiliza, sem autorização, cópias das seguintes obras:\n\n${obras(g)}\n\nURLs que contêm o material infrator:\n${urls(g)}\n\nEdição(ões) oficial(is) autorizada(s):\n${oficiais(g)}\n\nSolicito a remoção imediata do conteúdo acima, ou o bloqueio do acesso a ele.\n\nDeclaro, de boa-fé, que o uso descrito não é autorizado pelo titular dos direitos autorais, por seu agente ou pela lei. Declaro que as informações desta notificação são exatas e, sob as penas da lei, que estou autorizado(a) a agir em nome do titular dos direitos autorais.\n\nAtenciosamente,\n${firma.replace('%TITULAR%', titular(g))}`;\n}\n\nfunction avisoEn(g) {\n  return `To the Telegram DMCA team,\n${g[0].nivel_escalado > 0 ? `\\nTHIS IS A FOLLOW-UP. Our first notice was sent on ${dia(g[0].notificado_em)} and the content is still available.\\n` : ''}\nI am ${ag.nome}, authorized agent of ${titular(g)}, the copyright owner of the book(s) listed below. Unauthorized copies are being distributed through the following Telegram messages.\n\nWorks:\n${obras(g)}\n\nOfficial edition(s):\n${oficiais(g)}\n\nInfringing messages:\n${urls(g)}\n\nPlease remove the infringing content and, where applicable, restrict the channels distributing it.\n\nI have a good faith belief that the use described above is not authorized by the copyright owner, its agent, or the law. The information in this notice is accurate and, under penalty of perjury, I am authorized to act on behalf of the copyright owner.\n\nSincerely,\n${firma.replace('%TITULAR%', titular(g)).replace('Agente autorizado de', 'Authorized agent of')}`;\n}\n\nfunction bloqueGoogle(g) {\n  return `== PARA PEGAR EN EL FORMULARIO DE GOOGLE ==\nFormulario: https://reportcontent.google.com/forms/dmca_search\nTitular de los derechos: ${titular(g)}\nAgente que presenta: ${ag.nome} <${ag.email}>\nDirección: ${ag.endereco}\n\nObra(s) protegida(s):\n${obras(g)}\n\nEdición(es) oficial(es):\n${oficiais(g)}\n\nURLs que infringen (${g.length}):\n${urls(g)}\n\nRECORDATORIO: el formulario es una declaración bajo pena de perjurio. Abrí cada URL y confirmá que contiene la obra antes de enviar.`;\n}\n\nfunction bloqueGenerico(titulo, g, extra) {\n  return `== ${titulo} ==\nTitular de los derechos: ${titular(g)}\nAgente: ${ag.nome} <${ag.email}>\n${extra ? extra + '\\n' : ''}\nObra(s):\n${obras(g)}\n\nEdición(es) oficial(es):\n${oficiais(g)}\n\nURLs / publicaciones que infringen (${g.length}):\n${urls(g)}\n${g[0].nivel_escalado > 0 ? `\\nSEGUIMIENTO: primera notificación el ${dia(g[0].notificado_em)}, el contenido sigue en línea.` : ''}\nRECORDATORIO: confirmá cada enlace a mano antes de enviar. Es una declaración bajo pena de perjurio.`;\n}\n\nfunction push(g, canal, destinatario, asunto, corpo, manual) {\n  rows.push({\n    cliente_id: g[0].cliente_id,\n    canal,\n    nivel: g[0].nivel_escalado,\n    achado_ids: g.map((x) => x.id),\n    destinatario,\n    asunto,\n    corpo,\n    status: manual ? 'pendente_manual' : (auto ? 'aprobada' : 'pendente_aprobacion'),\n  });\n}\n\nfor (const nivel of [0, 1]) {\n  const lote = items.filter((a) => (nivel === 0 ? a.nivel_escalado === 0 : a.nivel_escalado >= 1));\n  const web = lote.filter((a) => !NO_WEB.includes(a.plataforma));\n\n  // --- Google Search (solo nivel 0): lotes de 20 URLs por cliente\n  if (nivel === 0) {\n    for (const porCliente of groupBy(web, (a) => a.cliente_id)) {\n      for (const g of chunk(porCliente, 20)) {\n        push(g, 'google_search', 'Formulário Google (remoção por direitos autorais)',\n          `Google · ${titular(g)} · ${g.length} URL(s)`, bloqueGoogle(g), true);\n      }\n    }\n  }\n\n  // --- Sitios: email al host / registrador, formulario manual si hay Cloudflare o sitio con formulario propio\n  for (const g of groupBy(web, (a) => `${a.cliente_id}|${a.dominio}`)) {\n    const a0 = g[0];\n    const dominio = a0.dominio || 'o site';\n    if (MANUAL_WEB.includes(a0.plataforma)) {\n      push(g, 'scribd', `Formulário de copyright de ${dominio}`,\n        `${dominio} · ${titular(g)} · ${g.length} URL(s)`,\n        bloqueGenerico(`FORMULÁRIO DE COPYRIGHT DE ${dominio.toUpperCase()}`, g,\n          'Dónde: formulario \"Copyright / DMCA\" del pie de página del sitio.'), true);\n      continue;\n    }\n    if (a0.cloudflare) {\n      push(g, 'cloudflare', 'Formulário de abuso da Cloudflare',\n        `Cloudflare · ${dominio} · ${g.length} URL(s)`,\n        bloqueGenerico('FORMULARIO DE ABUSO DE CLOUDFLARE (copyright)', g,\n          `Formulario: https://abuse.cloudflare.com/\\nSitio: ${dominio} (detrás de Cloudflare; ellos reenvían al host real).`), true);\n    }\n    const asunto = nivel === 0\n      ? `Notificação de violação de direitos autorais: ${dominio}`\n      : `ACOMPANHAMENTO: notificação de violação de direitos autorais: ${dominio}`;\n    if (nivel === 0) {\n      const dest = uniq([a0.cloudflare ? null : a0.abuse_host_email, `dmca@${dominio}`, `abuse@${dominio}`]);\n      push(g, 'host_abuse', dest.join(', '), asunto, avisoPt(g, dominio), false);\n    } else if (a0.abuse_registrar_email) {\n      push(g, 'host_abuse', a0.abuse_registrar_email, asunto, avisoPt(g, `${dominio} (registrador)`), false);\n    } else if (!a0.cloudflare) {\n      push(g, 'host_abuse', `(sin email del registrador de ${dominio}: buscarlo con whois)`, asunto,\n        bloqueGenerico('ESCALADO MANUAL AL REGISTRADOR', g, `Sitio: ${dominio}`), true);\n    }\n  }\n\n  // --- Telegram: email a dmca@telegram.org\n  for (const g of groupBy(lote.filter((a) => a.plataforma === 'telegram'), (a) => a.cliente_id)) {\n    for (const parte of chunk(g, 40)) {\n      push(parte, 'telegram', 'dmca@telegram.org',\n        `${nivel === 0 ? '' : 'Follow-up: '}Copyright infringement notice: ${titular(parte)}`, avisoEn(parte), false);\n    }\n  }\n\n  // --- Marketplaces: bloque manual\n  for (const g of groupBy(lote.filter((a) => a.plataforma === 'mercadolivre'), (a) => a.cliente_id)) {\n    push(g, 'mercado_livre', 'Programa de Proteção à Propriedade Intelectual (Mercado Livre)',\n      `Mercado Livre · ${titular(g)} · ${g.length} anúncio(s)`,\n      bloqueGenerico('DENUNCIA EN MERCADO LIVRE (PPI)', g, 'Anuncios que venden copias no autorizadas.'), true);\n  }\n  for (const g of groupBy(lote.filter((a) => a.plataforma === 'amazon'), (a) => a.cliente_id)) {\n    push(g, 'amazon', 'Amazon · Report Infringement',\n      `Amazon · ${titular(g)} · ${g.length} listing(s)`,\n      bloqueGenerico('DENUNCIA EN AMAZON (Report Infringement)', g, 'Cuenta de rights owner. Comparar contra el ASIN oficial.'), true);\n  }\n}\n\nif (!rows.length) return [];\nreturn [{ json: { rows } }];\n"
+      },
+      "id": "e0597637-e11b-4d0c-833f-37c9a0c9444b",
+      "name": "Planificar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO notificacoes (cliente_id, canal, nivel, achado_ids, destinatario, asunto, corpo, status)\nSELECT r.cliente_id, r.canal::canal_notif, r.nivel, ARRAY(SELECT jsonb_array_elements_text(r.achado_ids)::int),\n       r.destinatario, r.asunto, r.corpo, r.status\nFROM jsonb_to_recordset($1::jsonb) AS r(cliente_id int, canal text, nivel int, achado_ids jsonb, destinatario text, asunto text, corpo text, status text)\nRETURNING id;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify($json.rows || [])] }}"
+        }
+      },
+      "id": "0e1bcf6f-caa6-452c-98a3-0dd907c12b42",
+      "name": "Guardar notificaciones",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1820,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SntPostgres_001",
+          "name": "Sentinela Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT n.id, n.destinatario, n.asunto, n.corpo,\n       (SELECT valor FROM config WHERE chave = 'agente_email') AS agente_email\nFROM notificacoes n\nJOIN clientes c ON c.id = n.cliente_id\nWHERE n.status = 'aprobada'\n  AND n.canal IN ('host_abuse', 'telegram')\n  AND c.assinado_em IS NOT NULL\n  AND n.destinatario LIKE '%@%'\n  AND coalesce((SELECT valor FROM config WHERE chave = 'dry_run'), 'true') = 'false'\nORDER BY n.id\nLIMIT 20;",
+        "options": {}
+      },
+      "id": "07923c0c-02e0-4fd5-b619-23a3f051cb61",
+      "name": "Emails aprobados",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        520,
+        340
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SntPostgres_001",
+          "name": "Sentinela Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $json.agente_email }}",
+        "toEmail": "={{ $json.destinatario }}",
+        "subject": "={{ $json.asunto }}",
+        "emailFormat": "text",
+        "text": "={{ $json.corpo }}",
+        "options": {
+          "appendAttribution": false,
+          "bccEmail": "={{ $json.agente_email }}",
+          "replyTo": "={{ $json.agente_email }}"
+        }
+      },
+      "id": "25b3e848-6e41-4916-ba8a-3e7c3b32ec31",
+      "name": "Enviar email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        780,
+        340
+      ],
+      "credentials": {
+        "smtp": {
+          "id": "SntSmtp_001",
+          "name": "SMTP Sentinela"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH n AS (\n  UPDATE notificacoes SET status = 'enviada', enviado_em = now() WHERE id = $1::int RETURNING achado_ids\n)\nUPDATE achados SET status = 'notificado', notificado_em = coalesce(notificado_em, now()), ultima_notificacao_em = now()\nWHERE status IN ('confirmado', 'notificado') AND id IN (SELECT unnest(achado_ids) FROM n)\nRETURNING id;",
+        "options": {
+          "queryReplacement": "={{ [$('Emails aprobados').item.json.id] }}"
+        }
+      },
+      "id": "d73a4a77-1b2d-4c0c-ba84-c95af86e6e97",
+      "name": "Marcar enviada",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1040,
+        340
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SntPostgres_001",
+          "name": "Sentinela Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE notificacoes SET status = 'fallida' WHERE id = $1::int\nRETURNING id, asunto, (SELECT valor FROM config WHERE chave = 'telegram_admin_chat_id') AS chat_id;",
+        "options": {
+          "queryReplacement": "={{ [$('Emails aprobados').item.json.id] }}"
+        }
+      },
+      "id": "9597f06e-a917-4a14-b32a-9e371352cde8",
+      "name": "Marcar fallida",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1040,
+        510
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SntPostgres_001",
+          "name": "Sentinela Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ '⚠️ Falló el envío de la notificación #' + $json.id + ': ' + $json.asunto + '\\nQuedó en estado fallida. Para reintentar: UPDATE notificacoes SET status=\\'aprobada\\' WHERE id=' + $json.id }}",
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "appendAttribution": false,
+          "disable_web_page_preview": true
+        }
+      },
+      "id": "26f37f00-4041-4730-a01f-a7a4d109b597",
+      "name": "Avisar fallo",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1300,
+        510
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "SntTelegram_001",
+          "name": "Sentinela Bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Cada 10 min": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Dominios sin consultar",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Emails aprobados",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dominios sin consultar": {
+      "main": [
+        [
+          {
+            "node": "Consultar DNS y RDAP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar DNS y RDAP": {
+      "main": [
+        [
+          {
+            "node": "Guardar dominios",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar dominios": {
+      "main": [
+        [
+          {
+            "node": "Continuar una vez",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Continuar una vez": {
+      "main": [
+        [
+          {
+            "node": "Confirmados a notificar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confirmados a notificar": {
+      "main": [
+        [
+          {
+            "node": "Planificar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Planificar": {
+      "main": [
+        [
+          {
+            "node": "Guardar notificaciones",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Emails aprobados": {
+      "main": [
+        [
+          {
+            "node": "Enviar email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar email": {
+      "main": [
+        [
+          {
+            "node": "Marcar enviada",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Marcar fallida",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Marcar fallida": {
+      "main": [
+        [
+          {
+            "node": "Avisar fallo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Sao_Paulo"
+  },
+  "pinData": {}
+}

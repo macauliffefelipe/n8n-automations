@@ -1,0 +1,312 @@
+{
+  "name": "Sentinela 07 · Mantenimiento Telegram",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 3 * * 0"
+            }
+          ]
+        }
+      },
+      "id": "3a64b220-6dc1-46fc-8b1c-92b35227f30e",
+      "name": "Domingo 03:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        170
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "22b8c24e-2bb2-45dc-a546-baa31d5dea6b",
+      "name": "Manual",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT jsonb_object_agg(chave, valor) AS cfg FROM config;",
+        "options": {}
+      },
+      "id": "62889096-beab-4cb1-8855-59f1e7be489a",
+      "name": "Config",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        260,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SntPostgres_001",
+          "name": "Sentinela Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://sentinela:8088/export_dialogs",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "74dd7542-3cf8-4dc8-85bc-2d9a26903967",
+      "name": "Exportar grupos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        520,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "SntApiKey_001",
+          "name": "Sentinela API Key"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO grupos_telegram (chat_id, titulo, username, tipo, miembros)\nSELECT g.chat_id, g.titulo, g.username, g.tipo, g.miembros\nFROM jsonb_to_recordset($1::jsonb) AS g(chat_id bigint, titulo text, username text, tipo text, miembros int)\nON CONFLICT (chat_id) DO UPDATE SET titulo = EXCLUDED.titulo, username = EXCLUDED.username,\n  tipo = EXCLUDED.tipo, miembros = EXCLUDED.miembros, exportado_em = now()\nRETURNING chat_id;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify($json.grupos || [])] }}"
+        }
+      },
+      "id": "ff20ca95-4403-4d9b-962b-da9056066611",
+      "name": "Guardar grupos",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        780,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SntPostgres_001",
+          "name": "Sentinela Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $('Config').first().json.cfg || {};\nconst terminos = String(cfg.telegram_terminos || '').split(',').map((s) => s.trim()).filter(Boolean);\nif (!terminos.length) return [];\nreturn [{ json: { terminos, limite: 15 } }];\n"
+      },
+      "id": "71422c0c-dd6f-43ba-b37d-6f855c182c1d",
+      "name": "Terminos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        170
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://sentinela:8088/descubrir",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 600000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}"
+      },
+      "id": "f8f91bb7-0fc8-4d1b-8dca-712022cc2e7d",
+      "name": "Descubrir canales",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        780,
+        170
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "SntApiKey_001",
+          "name": "Sentinela API Key"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO grupos_candidatos (username, titulo, tipo, miembros, termino)\nSELECT c.username, c.titulo, c.tipo, c.miembros, c.termino\nFROM jsonb_to_recordset($1::jsonb) AS c(username text, titulo text, tipo text, miembros int, termino text, ya_miembro boolean)\nWHERE NOT coalesce(c.ya_miembro, false)\nON CONFLICT (username) DO NOTHING\nRETURNING username, titulo, miembros, (SELECT valor FROM config WHERE chave = 'telegram_admin_chat_id') AS chat_id;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify($json.canales || [])] }}"
+        }
+      },
+      "id": "16f3a5fc-8c3d-428d-9d0e-9bf5af658648",
+      "name": "Guardar candidatos",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1040,
+        170
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SntPostgres_001",
+          "name": "Sentinela Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const H = (typeof $helpers !== 'undefined') ? $helpers : this.helpers;\n\nfunction normUrl(u) {\n  try {\n    const x = new URL(String(u).trim());\n    if (x.protocol !== 'http:' && x.protocol !== 'https:') return null;\n    x.hash = '';\n    for (const k of [...x.searchParams.keys()]) {\n      if (/^(utm_|gclid$|fbclid$|ved$|usg$|sa$)/i.test(k)) x.searchParams.delete(k);\n    }\n    x.hostname = x.hostname.toLowerCase().replace(/^www\\./, '');\n    let s = x.toString();\n    if (x.pathname.length > 1 && !x.search && s.endsWith('/')) s = s.slice(0, -1);\n    return s;\n  } catch (e) { return null; }\n}\n\nfunction hostOf(u) {\n  try { return new URL(u).hostname.toLowerCase().replace(/^www\\./, ''); } catch (e) { return ''; }\n}\n\nfunction platformOf(host) {\n  const h = host || '';\n  const is = (d) => h === d || h.endsWith('.' + d);\n  if (is('t.me') || is('telegram.me')) return 'telegram';\n  if (is('scribd.com')) return 'scribd';\n  if (is('docero.com.br') || is('docero.net')) return 'docero';\n  if (is('passeidireto.com')) return 'passeidireto';\n  if (is('4shared.com')) return '4shared';\n  if (is('mediafire.com')) return 'mediafire';\n  if (is('mercadolivre.com.br') || is('mercadolibre.com')) return 'mercadolivre';\n  if (/(^|\\.)amazon\\./.test(h)) return 'amazon';\n  if (is('drive.google.com') || is('docs.google.com')) return 'drive';\n  return 'web';\n}\n\nfunction esc(s) {\n  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n}\n// Entrada: candidatos nuevos recién insertados. Un solo mensaje con los 15 más grandes.\nconst filas = $input.all().map((i) => i.json);\nif (!filas.length) return [];\nconst chat = filas[0].chat_id;\nif (!chat) return [];\nfilas.sort((a, b) => (b.miembros || 0) - (a.miembros || 0));\nconst lineas = filas.slice(0, 15).map((f) => `• @${esc(f.username)} · ${esc(f.titulo)} · ${f.miembros == null ? '?' : f.miembros} miembros`);\nreturn [{\n  json: {\n    chat_id: String(chat),\n    texto: `<b>🛰️ ${filas.length} canal(es) nuevo(s) para evaluar</b>\\nUnite a mano a los que valgan la pena y marcá estado='unido' en grupos_candidatos.\\n\\n${lineas.join('\\n')}`.slice(0, 3900),\n  },\n}];\n"
+      },
+      "id": "7b29ba7f-70de-4cc4-a1ea-22087717a076",
+      "name": "Armar mensaje",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        170
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.texto }}",
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "appendAttribution": false,
+          "disable_web_page_preview": true
+        }
+      },
+      "id": "a4d0afba-8069-46c1-a9e1-5fd88c219913",
+      "name": "Avisar candidatos",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1560,
+        170
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "SntTelegram_001",
+          "name": "Sentinela Bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Domingo 03:00": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Exportar grupos",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Terminos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Exportar grupos": {
+      "main": [
+        [
+          {
+            "node": "Guardar grupos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Terminos": {
+      "main": [
+        [
+          {
+            "node": "Descubrir canales",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Descubrir canales": {
+      "main": [
+        [
+          {
+            "node": "Guardar candidatos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar candidatos": {
+      "main": [
+        [
+          {
+            "node": "Armar mensaje",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar mensaje": {
+      "main": [
+        [
+          {
+            "node": "Avisar candidatos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Sao_Paulo"
+  },
+  "pinData": {}
+}

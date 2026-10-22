@@ -2,7 +2,7 @@
 
 I'm Felipe Mac Auliffe. I work in operations and automation (HubSpot, n8n, Zapier, Make) and I'm looking for remote Customer Success, Customer Support and RevOps roles with US companies.
 
-This repository is a portfolio, not a software library. It holds three automations I built and run every day on my own n8n server. Each one replaces a repetitive human task with a flow that does the routine part and hands the judgment calls back to a person. You do not need to read code to follow it: every folder has a plain-English README that explains the problem, how the flow works and what it produced.
+This repository is a portfolio, not a software library. It holds five automations. Four run on my own n8n server; the antipiracy monitor is a pilot that is built and tested offline but not yet in production. Each one replaces a repetitive human task with a flow that does the routine part and hands the judgment calls back to a person. You do not need to read code to follow it: every folder has a plain-English README that explains the problem, how the flow works and what it produced.
 
 ## The numbers behind it
 
@@ -22,10 +22,12 @@ How to read those figures honestly:
 | Lead generation, outbound profile B | 250+ prospects contacted | 15 | about 62 hours |
 | Expense and habit bot | 262 expenses + 216 habit entries logged | 3 | about 24 hours |
 | Job search pipeline | 865 listings screened, 92 shortlisted | my manual baseline is about 1.5 hours per screening session | not totalled |
+| Antipiracy monitor | none yet (pilot, not in production) | not applicable | not claimed |
+| Media monitoring report | none published (fictitious client in this version) | not applicable | not claimed |
 
 The estimates are deliberately conservative: doing the lead research by hand took me 30 to 40 minutes per prospect, and I only count 15.
 
-## The three projects
+## The five projects
 
 ### 1. [Lead generation pipeline](lead-gen-pipeline/)
 **Problem:** outbound prospecting meant hours of research per lead, and three near-identical workflows had to be maintained separately.
@@ -42,9 +44,19 @@ The estimates are deliberately conservative: doing the lead research by hand too
 **What I built:** a Telegram bot (plus an iPhone shortcut) where I type "supermarket 50k" or "gym 45 min" and the entry lands in the right sheet. Simple rules catch the common phrases; a local AI model only handles what the rules cannot read. Every entry can be undone with one message.
 **Result:** 262 expenses and 216 habit entries logged, with a daily 19:00 reminder for whatever I forgot.
 
+### 4. [Antipiracy monitor](antipiracy-monitor/)
+**Problem:** independent authors lose sales to pirated copies of their books, and getting them removed means finding each link, working out who hosts it, writing a formal notice and checking back weeks later.
+**What I built:** a monitoring and takedown system made of nine n8n workflows, a small Python service for Telegram and link checks, and a Postgres database. It searches the web and Telegram groups every day, has a local AI model sort real piracy from legitimate pages, shows me each case in Telegram with approval buttons, prepares the takedown notices, rechecks the links and sends the author a weekly PDF report.
+**Result:** none to claim yet. It is a pilot for one author, tested offline against a real database with simulated services, and it runs in dry-run mode, so no notice can be sent without my approval and a signed authorization.
+
+### 5. [Media monitoring report](media-monitoring/)
+**Problem:** communications agencies send clients a media report several times a day, and building it by hand means reading dozens of news feeds, picking what matters, grouping repeated stories and summarizing each one before a deadline.
+**What I built:** a workflow that collects news every hour, has a local AI model classify each article (relevance, topic, sentiment), group them into stories and draft a short card for each, then lays the result out as a PowerPoint report and emails it for human review twice a day. Correction buttons in the email measure the AI's accuracy over time, and a monitoring service raises an alarm if a report does not go out.
+**Result:** no numbers to claim. The published version is configured for a fictitious client; everything client-specific lives in one configuration node.
+
 ## How I approach automation
 
-These are the habits that run through all three projects, and they are the same ones I would bring to a support or customer-operations team:
+These are the habits that run through all five projects, and they are the same ones I would bring to a support or customer-operations team:
 
 - **People stay in the loop where it matters.** The outreach flow can run in a "review" mode where every email lands in my own inbox first. I ran it that way for the first two days before switching to automatic sending.
 - **Checks before actions.** Nothing is emailed to a prospect unless the draft passes a validation gate (length, language, signature, banned filler phrases, no template leftovers). A failed draft is parked with the reason, not sent.
@@ -59,6 +71,8 @@ These are the habits that run through all three projects, and they are the same 
 lead-gen-pipeline/     one configurable workflow + two example profiles + sheet template
 job-search-pipeline/   daily job screening workflow + inbox triage workflow + sheet template
 expense-habit-bot/     Telegram and iPhone bot workflow + sheet template
+antipiracy-monitor/    nine workflows + Python service + database schema + Docker setup
+media-monitoring/      news monitoring workflow + local report service (PowerPoint)
 shared/                error notifier used by all workflows
 tests/                 offline checks for the logic inside the workflows
 scripts/               leak scanner used before every commit
@@ -69,11 +83,11 @@ The workflow files are n8n exports, so they can be imported into any n8n instanc
 
 ## Privacy and safety
 
-Everything here was sanitized before publishing: no API keys, tokens, webhook URLs, spreadsheet IDs, chat IDs, email addresses or client names. Each is replaced by an obvious placeholder (`YOUR_...`, `REPLACE_WITH_YOUR_CREDENTIAL`) and listed in [`.env.example`](.env.example). Company-specific targeting and wording in the lead generation profiles were replaced with generic examples. A scanner (`scripts/scan.sh`) checks every commit for secrets and personal data.
+Everything here was sanitized before publishing: no API keys, tokens, webhook URLs, spreadsheet IDs, chat IDs, email addresses or client names. Each is replaced by an obvious placeholder (`YOUR_...`, `REPLACE_WITH_YOUR_CREDENTIAL`) and listed in [`.env.example`](.env.example). Company-specific targeting and wording in the lead generation profiles were replaced with generic examples, the antipiracy pilot is described without naming the author or her books, and the media monitoring report uses a fictitious client. A scanner (`scripts/scan.sh`) checks every commit for secrets and personal data.
 
 ## Stack
 
-n8n (self-hosted, Docker), Ollama with open models (Qwen, Llama), Google Sheets as the data layer, Telegram, Gmail, Hunter, Apollo, Adzuna.
+n8n (self-hosted, Docker), Ollama with open models (Qwen, Llama), Google Sheets and Postgres as data layers, Python (FastAPI, Telethon, Playwright, python-pptx), Telegram, healthchecks.io, Gmail, Hunter, Apollo, Adzuna.
 
 ## License
 

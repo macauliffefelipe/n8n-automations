@@ -1,0 +1,650 @@
+{
+  "name": "Sentinela 03 · Bot de aprobacion",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "id": "9174498b-72e4-413d-a213-f3b2e78686e0",
+      "name": "Cada 5 min",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "e29905a9-5a19-48b2-add6-c603027d7291",
+      "name": "Manual",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        170
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT a.id, a.url, a.plataforma, a.confianca, a.tipo, a.motivo,\n       left(a.snippet, 300) AS snippet, (a.print_url IS NOT NULL) AS con_captura,\n       o.titulo AS obra, c.nome_autoral, (c.assinado_em IS NULL) AS sin_autorizacion,\n       (SELECT valor FROM config WHERE chave = 'telegram_admin_chat_id') AS chat_id\nFROM achados a\nJOIN obras o ON o.id = a.obra_id\nJOIN clientes c ON c.id = o.cliente_id\nWHERE a.status = 'revisao' AND NOT a.bot_msg_enviado\nORDER BY a.es_frase DESC, a.confianca DESC NULLS LAST, a.id\nLIMIT 10;",
+        "options": {}
+      },
+      "id": "a192b925-cac0-4dd3-adf9-11e7007d6827",
+      "name": "Hallazgos en revision",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        260,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SntPostgres_001",
+          "name": "Sentinela Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const H = (typeof $helpers !== 'undefined') ? $helpers : this.helpers;\n\nfunction normUrl(u) {\n  try {\n    const x = new URL(String(u).trim());\n    if (x.protocol !== 'http:' && x.protocol !== 'https:') return null;\n    x.hash = '';\n    for (const k of [...x.searchParams.keys()]) {\n      if (/^(utm_|gclid$|fbclid$|ved$|usg$|sa$)/i.test(k)) x.searchParams.delete(k);\n    }\n    x.hostname = x.hostname.toLowerCase().replace(/^www\\./, '');\n    let s = x.toString();\n    if (x.pathname.length > 1 && !x.search && s.endsWith('/')) s = s.slice(0, -1);\n    return s;\n  } catch (e) { return null; }\n}\n\nfunction hostOf(u) {\n  try { return new URL(u).hostname.toLowerCase().replace(/^www\\./, ''); } catch (e) { return ''; }\n}\n\nfunction platformOf(host) {\n  const h = host || '';\n  const is = (d) => h === d || h.endsWith('.' + d);\n  if (is('t.me') || is('telegram.me')) return 'telegram';\n  if (is('scribd.com')) return 'scribd';\n  if (is('docero.com.br') || is('docero.net')) return 'docero';\n  if (is('passeidireto.com')) return 'passeidireto';\n  if (is('4shared.com')) return '4shared';\n  if (is('mediafire.com')) return 'mediafire';\n  if (is('mercadolivre.com.br') || is('mercadolibre.com')) return 'mercadolivre';\n  if (/(^|\\.)amazon\\./.test(h)) return 'amazon';\n  if (is('drive.google.com') || is('docs.google.com')) return 'drive';\n  return 'web';\n}\n\nfunction esc(s) {\n  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n}\n// Un mensaje de Telegram por hallazgo en cola de revisión, con botones Aprobar / Rechazar.\nconst out = [];\n$input.all().forEach((it, i) => {\n  const a = it.json;\n  if (!a.chat_id) return;   // falta configurar telegram_admin_chat_id\n  const conf = a.confianza == null ? 's/d' : Number(a.confianza).toFixed(2);\n  const lineas = [\n    `<b>🔎 Hallazgo #${a.id}</b> · ${esc(a.plataforma)}`,\n    `Obra: <b>${esc(a.obra)}</b> (${esc(a.nome_autoral)})`,\n    `URL: ${esc(a.url)}`,\n    `Confianza: ${conf} · tipo: ${esc(a.tipo || 's/d')}`,\n    a.motivo ? `Motivo: ${esc(a.motivo)}` : null,\n    a.snippet ? `Texto: <i>${esc(a.snippet)}</i>` : null,\n    a.con_captura ? '📸 captura guardada' : '📸 sin captura',\n    a.sin_autorizacion ? '⚠️ <b>Cliente SIN autorización firmada: no se va a notificar nada hasta cargarla.</b>' : null,\n  ].filter(Boolean);\n  out.push({\n    json: {\n      id: a.id,\n      chat_id: String(a.chat_id),\n      texto: lineas.join('\\n').slice(0, 3900),\n      b1_text: '✅ Aprobar', b1_data: `ap:${a.id}`,\n      b2_text: '❌ Rechazar', b2_data: `re:${a.id}`,\n    },\n    pairedItem: { item: i },\n  });\n});\nreturn out;\n"
+      },
+      "id": "2cbd404b-3153-492e-8f0a-dc42594d61c1",
+      "name": "Formatear hallazgos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.texto }}",
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "appendAttribution": false,
+          "disable_web_page_preview": true
+        },
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ $json.b1_text }}",
+                    "additionalFields": {
+                      "callback_data": "={{ $json.b1_data }}"
+                    }
+                  },
+                  {
+                    "text": "={{ $json.b2_text }}",
+                    "additionalFields": {
+                      "callback_data": "={{ $json.b2_data }}"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "id": "0368f1b4-0921-4e67-a701-179e0e00c033",
+      "name": "Enviar hallazgo",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        780,
+        0
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "SntTelegram_001",
+          "name": "Sentinela Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE achados SET bot_msg_enviado = true WHERE id = $1::int RETURNING id;",
+        "options": {
+          "queryReplacement": "={{ [$('Formatear hallazgos').item.json.id] }}"
+        }
+      },
+      "id": "5e34038f-f563-43ab-a189-6f70ce62b909",
+      "name": "Marcar hallazgo enviado",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1040,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SntPostgres_001",
+          "name": "Sentinela Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT n.id, n.canal, n.status, n.destinatario, n.asunto, n.corpo, n.nivel,\n       array_length(n.achado_ids, 1) AS n_urls,\n       (SELECT valor FROM config WHERE chave = 'telegram_admin_chat_id') AS chat_id,\n       (SELECT valor FROM config WHERE chave = 'dry_run') AS dry_run\nFROM notificacoes n\nWHERE NOT n.bot_msg_enviado AND n.status IN ('pendente_aprobacion', 'pendente_manual')\nORDER BY n.id\nLIMIT 10;",
+        "options": {}
+      },
+      "id": "766e4832-f950-48fe-a616-49cb3822c8cd",
+      "name": "Notificaciones pendientes",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        260,
+        170
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SntPostgres_001",
+          "name": "Sentinela Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const H = (typeof $helpers !== 'undefined') ? $helpers : this.helpers;\n\nfunction normUrl(u) {\n  try {\n    const x = new URL(String(u).trim());\n    if (x.protocol !== 'http:' && x.protocol !== 'https:') return null;\n    x.hash = '';\n    for (const k of [...x.searchParams.keys()]) {\n      if (/^(utm_|gclid$|fbclid$|ved$|usg$|sa$)/i.test(k)) x.searchParams.delete(k);\n    }\n    x.hostname = x.hostname.toLowerCase().replace(/^www\\./, '');\n    let s = x.toString();\n    if (x.pathname.length > 1 && !x.search && s.endsWith('/')) s = s.slice(0, -1);\n    return s;\n  } catch (e) { return null; }\n}\n\nfunction hostOf(u) {\n  try { return new URL(u).hostname.toLowerCase().replace(/^www\\./, ''); } catch (e) { return ''; }\n}\n\nfunction platformOf(host) {\n  const h = host || '';\n  const is = (d) => h === d || h.endsWith('.' + d);\n  if (is('t.me') || is('telegram.me')) return 'telegram';\n  if (is('scribd.com')) return 'scribd';\n  if (is('docero.com.br') || is('docero.net')) return 'docero';\n  if (is('passeidireto.com')) return 'passeidireto';\n  if (is('4shared.com')) return '4shared';\n  if (is('mediafire.com')) return 'mediafire';\n  if (is('mercadolivre.com.br') || is('mercadolibre.com')) return 'mercadolivre';\n  if (/(^|\\.)amazon\\./.test(h)) return 'amazon';\n  if (is('drive.google.com') || is('docs.google.com')) return 'drive';\n  return 'web';\n}\n\nfunction esc(s) {\n  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n}\n// Un mensaje por notificación: emails esperan \"Enviar\"; los canales manuales traen el bloque listo para pegar.\nconst out = [];\n$input.all().forEach((it, i) => {\n  const n = it.json;\n  if (!n.chat_id) return;\n  const manual = n.status === 'pendente_manual';\n  const cuerpo = String(n.corpo || '');\n  const recorte = cuerpo.length > 2600 ? cuerpo.slice(0, 2600) + '\\n[...recortado, completo en la tabla notificacoes]' : cuerpo;\n  const cab = manual\n    ? `<b>📋 Para enviar a mano #${n.id}</b> · ${esc(n.canal)} · ${n.n_urls} URL(s)${n.nivel > 0 ? ' · ESCALADO' : ''}`\n    : `<b>✉️ Email para aprobar #${n.id}</b> · ${esc(n.canal)} · ${n.n_urls} URL(s)${n.nivel > 0 ? ' · ESCALADO' : ''}`;\n  const lineas = [\n    cab,\n    n.destinatario ? `Para: ${esc(n.destinatario)}` : null,\n    n.asunto ? `Asunto: ${esc(n.asunto)}` : null,\n    !manual && n.dry_run !== 'false' ? '🧪 <b>DRY RUN activo:</b> aunque aprietes Enviar, el email NO sale hasta poner dry_run=false en la tabla config.' : null,\n    '',\n    `<pre>${esc(recorte)}</pre>`,\n  ].filter((x) => x !== null);\n  out.push({\n    json: {\n      id: n.id,\n      chat_id: String(n.chat_id),\n      texto: lineas.join('\\n').slice(0, 4000),\n      b1_text: manual ? '✅ Marcar enviada' : '📤 Enviar', b1_data: manual ? `em:${n.id}` : `se:${n.id}`,\n      b2_text: '🚫 Cancelar', b2_data: `cn:${n.id}`,\n    },\n    pairedItem: { item: i },\n  });\n});\nreturn out;\n"
+      },
+      "id": "a989f197-5cbe-46f5-8af1-4d24e398bb44",
+      "name": "Formatear notificaciones",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        170
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.texto }}",
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "appendAttribution": false,
+          "disable_web_page_preview": true
+        },
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ $json.b1_text }}",
+                    "additionalFields": {
+                      "callback_data": "={{ $json.b1_data }}"
+                    }
+                  },
+                  {
+                    "text": "={{ $json.b2_text }}",
+                    "additionalFields": {
+                      "callback_data": "={{ $json.b2_data }}"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "id": "16a5701f-ec7c-4135-87c9-c0b7c6716a82",
+      "name": "Enviar notificacion",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        780,
+        170
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "SntTelegram_001",
+          "name": "Sentinela Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE notificacoes SET bot_msg_enviado = true WHERE id = $1::int RETURNING id;",
+        "options": {
+          "queryReplacement": "={{ [$('Formatear notificaciones').item.json.id] }}"
+        }
+      },
+      "id": "23fec7f8-937c-45be-9013-cfa452524fd2",
+      "name": "Marcar notificacion enviada",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1040,
+        170
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SntPostgres_001",
+          "name": "Sentinela Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "updates": [
+          "callback_query"
+        ],
+        "additionalFields": {}
+      },
+      "id": "c4ce2632-4712-4c64-b6d3-b6a02165d34a",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        510
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "SntTelegram_001",
+          "name": "Sentinela Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT valor FROM config WHERE chave = 'telegram_admin_chat_id';",
+        "options": {}
+      },
+      "id": "68a57606-f3b7-4829-978d-7b66b83bf30d",
+      "name": "Admin id",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        260,
+        510
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SntPostgres_001",
+          "name": "Sentinela Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Entrada: fila con el admin id (config) tras el Telegram Trigger de callback_query.\nconst cq = ($('Telegram Trigger').first().json || {}).callback_query;\nconst admin = String(($input.first().json || {}).valor || '').trim();\nif (!cq) return [];\nconst base = { query_id: cq.id, chat_id: cq.message && cq.message.chat && cq.message.chat.id, message_id: cq.message && cq.message.message_id };\nconst m = String(cq.data || '').match(/^(ap|re|se|cn|em):(\\d+)$/);\nconst autorizado = admin !== '' && String(cq.from && cq.from.id) === admin;\nif (!autorizado || !m) {\n  return [{ json: { ...base, ok: false, answer_text: autorizado ? 'Acción no reconocida' : 'No autorizado' } }];\n}\nreturn [{ json: { ...base, ok: true, accion: m[1], id: Number(m[2]), texto_original: (cq.message && cq.message.text) || '' } }];\n"
+      },
+      "id": "6a6a112f-bcd1-4064-baa4-4c9dc3c9030c",
+      "name": "Parsear callback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        510
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "5fd8dfb1-f74b-4d3e-9c6d-2d6eb298b09a",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f9fd91f0-6ff1-4bd5-9d17-da4ef2f429e8",
+      "name": "Autorizado?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        780,
+        510
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH a AS (\n  UPDATE achados SET status = CASE WHEN $1::text = 'ap' THEN 'confirmado'::achado_status ELSE 'rejeitado'::achado_status END,\n         aprobado_em = now()\n  WHERE $1::text IN ('ap', 're') AND id = $2::int AND status = 'revisao'\n  RETURNING id\n), n AS (\n  UPDATE notificacoes\n  SET status = CASE $1::text WHEN 'se' THEN 'aprobada' WHEN 'cn' THEN 'cancelada' ELSE 'enviada_manual' END,\n      enviado_em = CASE WHEN $1::text = 'em' THEN now() ELSE enviado_em END\n  WHERE $1::text IN ('se', 'cn', 'em') AND id = $2::int\n    AND status IN ('pendente_aprobacion', 'pendente_manual')\n    AND NOT ($1::text = 'se' AND status = 'pendente_manual')\n    AND NOT ($1::text = 'em' AND status = 'pendente_aprobacion')\n  RETURNING id, achado_ids\n), marcar AS (\n  UPDATE achados SET status = 'notificado', notificado_em = coalesce(notificado_em, now()), ultima_notificacao_em = now()\n  WHERE $1::text = 'em' AND status IN ('confirmado', 'notificado') AND id IN (SELECT unnest(achado_ids) FROM n)\n  RETURNING id\n), cancelar AS (\n  UPDATE achados x SET status = 'rejeitado', notas = coalesce(x.notas || ' | ', '') || 'notificacion cancelada'\n  WHERE $1::text = 'cn' AND x.status = 'confirmado' AND x.id IN (SELECT unnest(achado_ids) FROM n)\n    AND NOT EXISTS (SELECT 1 FROM notificacoes o WHERE o.id <> $2::int AND o.status <> 'cancelada'\n                    AND x.id = ANY (o.achado_ids) AND o.nivel = x.nivel_escalado)\n  RETURNING x.id\n)\nSELECT (SELECT count(*) FROM a) AS achados, (SELECT count(*) FROM n) AS notifs;",
+        "options": {
+          "queryReplacement": "={{ [$json.accion, $json.id] }}"
+        }
+      },
+      "id": "6d90862c-897f-4196-8034-d471feba854d",
+      "name": "Aplicar accion",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1040,
+        510
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SntPostgres_001",
+          "name": "Sentinela Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Entrada: resultado del UPDATE (achados / notifs afectados). Arma la respuesta al botón y el texto nuevo del mensaje.\nconst cb = $('Parsear callback').first().json;\nconst r = $input.first().json || {};\nconst hecho = Number(r.achados || 0) + Number(r.notifs || 0) > 0;\nconst ETIQUETA = {\n  ap: '✅ APROBADO', re: '❌ RECHAZADO', se: '📤 APROBADO PARA ENVIAR', cn: '🚫 CANCELADO', em: '✅ MARCADA COMO ENVIADA',\n};\nconst etiqueta = hecho ? ETIQUETA[cb.accion] : '↩️ YA PROCESADO ANTES';\nreturn [{\n  json: {\n    query_id: cb.query_id,\n    chat_id: cb.chat_id,\n    message_id: cb.message_id,\n    answer_text: hecho ? 'Listo' : 'Ya estaba procesado',\n    nuevo_texto: `${etiqueta} (#${cb.id})\\n\\n${cb.texto_original}`.slice(0, 4000),\n  },\n}];\n"
+      },
+      "id": "35c36165-2b20-4e00-a7d1-dbc9289e0b1b",
+      "name": "Armar resultado",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        510
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "7330309f-a1cd-4398-ad66-e9369e65460b",
+              "name": "query_id",
+              "value": "={{ $json.query_id }}",
+              "type": "string"
+            },
+            {
+              "id": "d93f1ee1-9415-4a7f-b146-8d3fecf39004",
+              "name": "answer_text",
+              "value": "={{ $json.answer_text }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "3ec8b1f1-c5f1-42a7-b762-4c6225768d69",
+      "name": "No autorizado",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1040,
+        680
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "callback",
+        "operation": "answerQuery",
+        "queryId": "={{ $json.query_id }}",
+        "additionalFields": {
+          "text": "={{ $json.answer_text }}"
+        }
+      },
+      "id": "a62bdc4e-0272-40f5-924c-0c1c4d7b08be",
+      "name": "Responder boton",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1560,
+        510
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "SntTelegram_001",
+          "name": "Sentinela Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "editMessageText",
+        "chatId": "={{ $json.chat_id }}",
+        "messageId": "={{ $json.message_id }}",
+        "text": "={{ $json.nuevo_texto }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "2809b95d-c19b-4228-89e1-38df288de249",
+      "name": "Editar mensaje",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1560,
+        680
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "SntTelegram_001",
+          "name": "Sentinela Bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Cada 5 min": {
+      "main": [
+        [
+          {
+            "node": "Hallazgos en revision",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Notificaciones pendientes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual": {
+      "main": [
+        [
+          {
+            "node": "Hallazgos en revision",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Notificaciones pendientes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hallazgos en revision": {
+      "main": [
+        [
+          {
+            "node": "Formatear hallazgos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formatear hallazgos": {
+      "main": [
+        [
+          {
+            "node": "Enviar hallazgo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar hallazgo": {
+      "main": [
+        [
+          {
+            "node": "Marcar hallazgo enviado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notificaciones pendientes": {
+      "main": [
+        [
+          {
+            "node": "Formatear notificaciones",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formatear notificaciones": {
+      "main": [
+        [
+          {
+            "node": "Enviar notificacion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar notificacion": {
+      "main": [
+        [
+          {
+            "node": "Marcar notificacion enviada",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Admin id",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Admin id": {
+      "main": [
+        [
+          {
+            "node": "Parsear callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parsear callback": {
+      "main": [
+        [
+          {
+            "node": "Autorizado?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Autorizado?": {
+      "main": [
+        [
+          {
+            "node": "Aplicar accion",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No autorizado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aplicar accion": {
+      "main": [
+        [
+          {
+            "node": "Armar resultado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar resultado": {
+      "main": [
+        [
+          {
+            "node": "Responder boton",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Editar mensaje",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No autorizado": {
+      "main": [
+        [
+          {
+            "node": "Responder boton",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Sao_Paulo"
+  },
+  "pinData": {}
+}

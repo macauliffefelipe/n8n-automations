@@ -1,0 +1,555 @@
+{
+  "name": "Sentinela 06 · Reporte semanal",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * 1"
+            }
+          ]
+        }
+      },
+      "id": "fe9c705a-176f-4562-baf9-406a33da3229",
+      "name": "Lunes 08:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        170
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "b0e1b8c8-f2dc-4320-bc1d-b9e2d4aa4c45",
+      "name": "Manual",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT jsonb_object_agg(chave, valor) AS cfg FROM config;",
+        "options": {}
+      },
+      "id": "bb32e2dc-8f13-47c9-8256-b37ce20ea98f",
+      "name": "Config",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        260,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SntPostgres_001",
+          "name": "Sentinela Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id FROM clientes WHERE status = 'ativo' AND assinado_em IS NOT NULL ORDER BY id;",
+        "options": {}
+      },
+      "id": "7a78e67b-9506-47b0-8c1f-d3dc9b9b646d",
+      "name": "Clientes activos",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        520,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SntPostgres_001",
+          "name": "Sentinela Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH nuevos AS (\n  SELECT a.id, a.url, a.plataforma, a.print_url, a.achado_em, o.titulo\n  FROM achados a JOIN obras o ON o.id = a.obra_id\n  WHERE o.cliente_id = $1::int AND a.achado_em >= now() - interval '7 days'\n    AND a.status NOT IN ('novo', 'revisao', 'rejeitado')\n), todos AS (\n  SELECT a.* FROM achados a JOIN obras o ON o.id = a.obra_id\n  WHERE o.cliente_id = $1::int AND a.status NOT IN ('novo', 'revisao', 'rejeitado')\n), rem AS (\n  SELECT * FROM todos WHERE removido_em >= now() - interval '7 days'\n)\nSELECT json_build_object(\n  'cliente_id', c.id, 'cliente', c.nome_autoral, 'nome', c.nome, 'email', c.email,\n  'desde', to_char(current_date - 7, 'DD/MM/YYYY'),\n  'ate', to_char(current_date - 1, 'DD/MM/YYYY'),\n  'novos', (SELECT count(*) FROM nuevos),\n  'por_plataforma', coalesce((SELECT json_object_agg(plataforma, n) FROM (SELECT plataforma, count(*) AS n FROM nuevos GROUP BY 1) p), '{}'::json),\n  'novos_lista', coalesce((SELECT json_agg(json_build_object('id', id, 'obra', titulo, 'url', url, 'plataforma', plataforma)\n                           ORDER BY achado_em DESC) FROM (SELECT * FROM nuevos ORDER BY achado_em DESC LIMIT 40) x), '[]'::json),\n  'ids_con_captura', coalesce((SELECT json_agg(id) FROM (SELECT id FROM nuevos WHERE print_url IS NOT NULL ORDER BY achado_em DESC LIMIT 12) y), '[]'::json),\n  'notificacoes', coalesce((SELECT json_agg(json_build_object('canal', n.canal, 'quando', to_char(n.enviado_em, 'DD/MM'),\n                           'links', array_length(n.achado_ids, 1)) ORDER BY n.enviado_em)\n                           FROM notificacoes n WHERE n.cliente_id = $1::int AND n.enviado_em >= now() - interval '7 days'\n                             AND n.status IN ('enviada', 'enviada_manual')), '[]'::json),\n  'removidos_semana', (SELECT count(*) FROM rem),\n  'dias_medios', (SELECT round(avg(dias_ate_remocao)::numeric, 1) FROM rem),\n  'total_encontrado', (SELECT count(*) FROM todos),\n  'total_removido', (SELECT count(*) FROM todos WHERE status = 'removido'),\n  'persistentes', coalesce((SELECT json_agg(json_build_object('obra', o.titulo, 'url', t.url,\n                           'dias', floor(extract(epoch FROM now() - t.notificado_em) / 86400)::int))\n                           FROM todos t JOIN obras o ON o.id = t.obra_id WHERE t.status = 'persistente'), '[]'::json)\n) AS datos\nFROM clientes c WHERE c.id = $1::int;",
+        "options": {
+          "queryReplacement": "={{ [$json.id] }}"
+        }
+      },
+      "id": "cb00d6d4-921f-475c-b43c-f3cfe4fe029f",
+      "name": "Datos del reporte",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        780,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SntPostgres_001",
+          "name": "Sentinela Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Entrada: una fila por cliente con `datos` (JSON del SQL). Pide a Ollama UNA frase humana sobre cifras reales.\nconst MODELO = 'qwen2.5:14b';   // EDITAR: el mismo modelo del triage u otro de tu Ollama\nconst SYS = 'Escribís una o dos frases en portugués brasileño, cálidas y profesionales, que resumen la semana de antipiratería de una autora. '\n  + 'Usá SOLO las cifras que te paso, no inventes datos, sin emojis. Si no hubo novedades, decilo con tranquilidad. '\n  + 'Respondé SOLO un JSON: {\"frase\":\"...\"}';\n\nreturn $input.all().map((it, i) => {\n  const d = it.json.datos || {};\n  const hechos = {\n    novos_links: d.novos, notificacoes_enviadas: (d.notificacoes || []).length,\n    removidos_na_semana: d.removidos_semana, dias_medios_ate_remocao: d.dias_medios,\n    total_encontrado: d.total_encontrado, total_removido: d.total_removido,\n    casos_persistentes: (d.persistentes || []).length,\n  };\n  return {\n    json: {\n      datos: d,\n      ollama_body: {\n        model: MODELO, stream: false, format: 'json', options: { temperature: 0.3, num_ctx: 2048 },\n        messages: [{ role: 'system', content: SYS }, { role: 'user', content: JSON.stringify(hechos) }],\n      },\n    },\n    pairedItem: { item: i },\n  };\n});\n"
+      },
+      "id": "66d6f3c3-5f1b-437e-ac7f-55f3e8033d1f",
+      "name": "Armar prompt resumen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:11434/api/chat",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.ollama_body) }}",
+        "options": {
+          "timeout": 240000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 0
+            }
+          }
+        }
+      },
+      "id": "fd3c189b-5675-4f13-958a-89fc976a0307",
+      "name": "Ollama",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1300,
+        0
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "fb955164-a8c0-4de5-b680-14f650ecc217",
+      "name": "Unir frase",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1560,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://sentinela:8088/capturas_b64",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 0
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ ids: $json.datos.ids_con_captura || [], ancho: 640 }) }}"
+      },
+      "id": "156d5e0c-c706-4520-962a-6bd8ac95adde",
+      "name": "Capturas",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1820,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "SntApiKey_001",
+          "name": "Sentinela API Key"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "7b60682a-99fc-4508-a60b-88ed7fac0a78",
+      "name": "Unir capturas",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        2080,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const H = (typeof $helpers !== 'undefined') ? $helpers : this.helpers;\n\nfunction normUrl(u) {\n  try {\n    const x = new URL(String(u).trim());\n    if (x.protocol !== 'http:' && x.protocol !== 'https:') return null;\n    x.hash = '';\n    for (const k of [...x.searchParams.keys()]) {\n      if (/^(utm_|gclid$|fbclid$|ved$|usg$|sa$)/i.test(k)) x.searchParams.delete(k);\n    }\n    x.hostname = x.hostname.toLowerCase().replace(/^www\\./, '');\n    let s = x.toString();\n    if (x.pathname.length > 1 && !x.search && s.endsWith('/')) s = s.slice(0, -1);\n    return s;\n  } catch (e) { return null; }\n}\n\nfunction hostOf(u) {\n  try { return new URL(u).hostname.toLowerCase().replace(/^www\\./, ''); } catch (e) { return ''; }\n}\n\nfunction platformOf(host) {\n  const h = host || '';\n  const is = (d) => h === d || h.endsWith('.' + d);\n  if (is('t.me') || is('telegram.me')) return 'telegram';\n  if (is('scribd.com')) return 'scribd';\n  if (is('docero.com.br') || is('docero.net')) return 'docero';\n  if (is('passeidireto.com')) return 'passeidireto';\n  if (is('4shared.com')) return '4shared';\n  if (is('mediafire.com')) return 'mediafire';\n  if (is('mercadolivre.com.br') || is('mercadolibre.com')) return 'mercadolivre';\n  if (/(^|\\.)amazon\\./.test(h)) return 'amazon';\n  if (is('drive.google.com') || is('docs.google.com')) return 'drive';\n  return 'web';\n}\n\nfunction esc(s) {\n  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n}\n// Entrada (2 Merge por posición): datos + respuesta de Ollama + imágenes (data-URI). Salida: HTML como binario + resumen.\nconst CANAL = {\n  google_search: 'Google Busca (desindexação)', host_abuse: 'Provedor de hospedagem / site', telegram: 'Telegram',\n  scribd: 'Scribd / Docero / Passei Direto', mercado_livre: 'Mercado Livre', amazon: 'Amazon', cloudflare: 'Cloudflare', meta: 'Meta',\n};\nconst PLAT = {\n  telegram: 'Telegram', web: 'Sites e blogs', scribd: 'Scribd', docero: 'Docero', passeidireto: 'Passei Direto',\n  '4shared': '4shared', mediafire: 'MediaFire', mercadolivre: 'Mercado Livre', amazon: 'Amazon', drive: 'Google Drive',\n};\nconst n = (x) => (x == null ? 0 : Number(x));\n\nconst out = [];\nfor (let i = 0; i < $input.all().length; i++) {\n  const j = $input.all()[i].json;\n  const d = j.datos || {};\n  let frase = '';\n  try {\n    const c = String((j.message && j.message.content) || '').replace(/```json|```/g, '').trim();\n    frase = String(JSON.parse(c.match(/\\{[\\s\\S]*\\}/)[0]).frase || '').trim();\n  } catch (e) { frase = ''; }\n  if (!frase) {\n    frase = `Nesta semana encontramos ${n(d.novos)} novo(s) link(s) com cópias não autorizadas, enviamos ${(d.notificacoes || []).length} notificação(ões) e ${n(d.removidos_semana)} link(s) foram removidos.`;\n  }\n  const imgs = j.imagenes || {};\n  const tasa = n(d.total_encontrado) ? Math.round((100 * n(d.total_removido)) / n(d.total_encontrado)) : 0;\n\n  const filasPlat = Object.entries(d.por_plataforma || {}).sort((a, b) => b[1] - a[1])\n    .map(([p, c]) => `<tr><td>${esc(PLAT[p] || p)}</td><td class=\"num\">${c}</td></tr>`).join('')\n    || '<tr><td colspan=\"2\" class=\"vacio\">Nenhum link novo esta semana.</td></tr>';\n  const filasNotif = (d.notificacoes || [])\n    .map((x) => `<tr><td>${esc(x.quando)}</td><td>${esc(CANAL[x.canal] || x.canal)}</td><td class=\"num\">${n(x.links)}</td></tr>`).join('')\n    || '<tr><td colspan=\"3\" class=\"vacio\">Nenhuma notificação enviada esta semana.</td></tr>';\n  const filasPers = (d.persistentes || [])\n    .map((x) => `<tr><td>${esc(x.obra)}</td><td class=\"url\">${esc(x.url)}</td><td class=\"num\">${n(x.dias)} d</td></tr>`).join('');\n  const comCaptura = (d.novos_lista || []).filter((x) => imgs[String(x.id)]).slice(0, 12);\n  const galeria = comCaptura.map((x) => `<figure><img src=\"${imgs[String(x.id)]}\"><figcaption>${esc(x.obra)}<br><span class=\"url\">${esc(x.url)}</span></figcaption></figure>`).join('');\n\n  const html = `<!doctype html><html lang=\"pt-BR\"><head><meta charset=\"utf-8\"><style>\n:root{--ink:#1c2430;--mut:#667085;--acc:#1f3a5f;--bg:#f6f7f9;--line:#e3e6eb;--ok:#1b7f4b;--warn:#b54708}\n*{box-sizing:border-box}body{font-family:Georgia,'Times New Roman',serif;color:var(--ink);margin:0;font-size:12.5px;line-height:1.5}\nheader{background:var(--acc);color:#fff;padding:26px 34px}header h1{margin:0 0 4px;font-size:22px;font-weight:600}\nheader p{margin:0;opacity:.85;font-family:Helvetica,Arial,sans-serif;font-size:12px}\nmain{padding:24px 34px}.frase{font-size:15px;border-left:4px solid var(--acc);padding:6px 14px;margin:0 0 22px;background:var(--bg)}\n.cards{display:flex;gap:10px;margin-bottom:24px}.card{flex:1;border:1px solid var(--line);border-radius:6px;padding:12px 14px}\n.card b{display:block;font-size:26px;color:var(--acc);font-family:Helvetica,Arial,sans-serif}.card span{color:var(--mut);font-family:Helvetica,Arial,sans-serif;font-size:11px}\nh2{font-size:14px;margin:26px 0 8px;color:var(--acc);text-transform:uppercase;letter-spacing:.06em;font-family:Helvetica,Arial,sans-serif}\ntable{width:100%;border-collapse:collapse;font-family:Helvetica,Arial,sans-serif;font-size:11.5px}\nth,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line)}th{color:var(--mut);font-weight:600}\n.num{text-align:right;white-space:nowrap}.vacio{color:var(--mut);font-style:italic}.url{word-break:break-all;color:var(--mut);font-size:10.5px}\n.gal{display:flex;flex-wrap:wrap;gap:12px}figure{margin:0;width:calc(50% - 6px);break-inside:avoid;border:1px solid var(--line);border-radius:6px;overflow:hidden}\nfigure img{width:100%;display:block}figcaption{padding:6px 8px;font-family:Helvetica,Arial,sans-serif;font-size:10.5px}\n.pers{color:var(--warn)}footer{padding:18px 34px;color:var(--mut);font-family:Helvetica,Arial,sans-serif;font-size:10.5px;border-top:1px solid var(--line)}\n</style></head><body>\n<header><h1>Relatório semanal · Sentinela Antipirataria</h1><p>${esc(d.cliente)} · ${esc(d.desde)} a ${esc(d.ate)}</p></header>\n<main>\n<p class=\"frase\">${esc(frase)}</p>\n<div class=\"cards\">\n<div class=\"card\"><b>${n(d.novos)}</b><span>links novos encontrados</span></div>\n<div class=\"card\"><b>${n(d.removidos_semana)}</b><span>links removidos na semana</span></div>\n<div class=\"card\"><b>${d.dias_medios == null ? '–' : esc(d.dias_medios)}</b><span>dias médios até a remoção</span></div>\n<div class=\"card\"><b>${tasa}%</b><span>taxa de remoção acumulada</span></div>\n</div>\n<h2>Novos links por plataforma</h2><table><tr><th>Plataforma</th><th class=\"num\">Links</th></tr>${filasPlat}</table>\n${galeria ? `<h2>Evidências desta semana</h2><div class=\"gal\">${galeria}</div>` : ''}\n<h2>Notificações enviadas</h2><table><tr><th>Data</th><th>Destino</th><th class=\"num\">Links</th></tr>${filasNotif}</table>\n<h2>Acumulado histórico</h2><table>\n<tr><td>Total de links encontrados</td><td class=\"num\">${n(d.total_encontrado)}</td></tr>\n<tr><td>Total removidos</td><td class=\"num\">${n(d.total_removido)}</td></tr>\n<tr><td>Taxa de remoção</td><td class=\"num\">${tasa}%</td></tr></table>\n<h2 class=\"pers\">Casos persistentes</h2>\n${filasPers ? `<p>Links que seguem no ar após 30 dias de notificação. Seguimos escalando cada caso.</p><table><tr><th>Obra</th><th>Link</th><th class=\"num\">Dias</th></tr>${filasPers}</table>` : '<p class=\"vacio\">Nenhum caso persistente no momento.</p>'}\n</main><footer>FMA Solutions · Sentinela Antipirataria. Cada link é verificado manualmente antes de ser notificado.</footer>\n</body></html>`;\n\n  const resumen3 = `📚 ${d.cliente}: resumo da semana (${d.desde} a ${d.ate})\\n`\n    + `🔎 ${n(d.novos)} novos links · 📨 ${(d.notificacoes || []).length} notificações · ✅ ${n(d.removidos_semana)} removidos\\n`\n    + `📈 Acumulado: ${n(d.total_removido)} de ${n(d.total_encontrado)} removidos (${tasa}%). Relatório completo no seu e-mail.`;\n\n  out.push({\n    json: { email: d.email, nome: d.nome, cliente: d.cliente, cliente_id: d.cliente_id, hasta: d.ate, resumen3 },\n    binary: { data: await H.prepareBinaryData(Buffer.from(html, 'utf8'), 'index.html', 'text/html') },\n    pairedItem: { item: i },\n  });\n}\nreturn out;\n"
+      },
+      "id": "bff79cdb-591e-4f5b-b61d-b94786e55009",
+      "name": "Armar HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2340,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://gotenberg:3000/forms/chromium/convert/html",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "files",
+              "inputDataFieldName": "data"
+            },
+            {
+              "name": "paperWidth",
+              "value": "8.27"
+            },
+            {
+              "name": "paperHeight",
+              "value": "11.7"
+            },
+            {
+              "name": "marginTop",
+              "value": "0"
+            },
+            {
+              "name": "marginBottom",
+              "value": "0.4"
+            },
+            {
+              "name": "marginLeft",
+              "value": "0"
+            },
+            {
+              "name": "marginRight",
+              "value": "0"
+            },
+            {
+              "name": "printBackground",
+              "value": "true"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "pdf"
+            }
+          }
+        }
+      },
+      "id": "f9d5893c-f289-4ed5-82f9-8b2c57da811d",
+      "name": "Gotenberg",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2600,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Entrada: PDF de Gotenberg (binario `pdf`). Recupera los datos del cliente desde \"Armar HTML\" y nombra el archivo.\nreturn $input.all().map((it, i) => {\n  const base = $('Armar HTML').itemMatching(i).json;\n  const nombre = String(base.cliente || 'cliente').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '');\n  const bin = it.binary.pdf;\n  bin.fileName = `Relatorio-Sentinela-${nombre}-${base.hasta || ''}.pdf`.replace(/-\\.pdf$/, '.pdf');\n  bin.mimeType = 'application/pdf';\n  return { json: { ...base }, binary: { pdf: bin }, pairedItem: { item: i } };\n});\n"
+      },
+      "id": "207c724e-a71b-4987-9a51-473706d3df9b",
+      "name": "Nombrar PDF",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2860,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $('Config').first().json.cfg.agente_email }}",
+        "toEmail": "={{ $('Config').first().json.cfg.dry_run === 'false' ? $json.email : $('Config').first().json.cfg.agente_email }}",
+        "subject": "={{ ($('Config').first().json.cfg.dry_run === 'false' ? '' : '[DRY RUN, no enviado a la autora] ') + 'Relatório semanal · Sentinela Antipirataria · ' + $json.cliente }}",
+        "emailFormat": "text",
+        "text": "={{ 'Olá, ' + ($json.nome || '') + '!\\n\\nSegue em anexo o relatório semanal.\\n\\n' + $json.resumen3 + '\\n\\nQualquer dúvida, é só responder este e-mail.' }}",
+        "attachments": "pdf",
+        "options": {
+          "appendAttribution": false,
+          "bccEmail": "={{ $('Config').first().json.cfg.agente_email }}"
+        }
+      },
+      "id": "b3a34d1e-2a95-4446-b657-77e58a44f327",
+      "name": "Enviar reporte",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        3120,
+        0
+      ],
+      "credentials": {
+        "smtp": {
+          "id": "SntSmtp_001",
+          "name": "SMTP Sentinela"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO reportes (cliente_id, resumen) VALUES ($1::int, $2) RETURNING id;",
+        "options": {
+          "queryReplacement": "={{ [$('Nombrar PDF').item.json.cliente_id, $('Nombrar PDF').item.json.resumen3] }}"
+        }
+      },
+      "id": "6f7c597b-a5c6-4cc7-a949-ec7f93e6dd0c",
+      "name": "Registrar reporte",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        3380,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SntPostgres_001",
+          "name": "Sentinela Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Config').first().json.cfg.telegram_admin_chat_id }}",
+        "text": "={{ ($('Config').first().json.cfg.dry_run === 'false' ? '📨 Reporte enviado a ' : '🧪 DRY RUN: el reporte de ' ) + $('Nombrar PDF').item.json.cliente + ($('Config').first().json.cfg.dry_run === 'false' ? '.' : ' fue a tu email, no a la autora.') + '\\n\\nResumen para WhatsApp:\\n' + $('Nombrar PDF').item.json.resumen3 }}",
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "appendAttribution": false,
+          "disable_web_page_preview": true
+        }
+      },
+      "id": "045cce4a-01a1-40c2-aa2e-e45d7b14e72b",
+      "name": "Notify owner",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3640,
+        0
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "SntTelegram_001",
+          "name": "Sentinela Bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Lunes 08:00": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Clientes activos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clientes activos": {
+      "main": [
+        [
+          {
+            "node": "Datos del reporte",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Datos del reporte": {
+      "main": [
+        [
+          {
+            "node": "Armar prompt resumen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar prompt resumen": {
+      "main": [
+        [
+          {
+            "node": "Ollama",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Unir frase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama": {
+      "main": [
+        [
+          {
+            "node": "Unir frase",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Unir frase": {
+      "main": [
+        [
+          {
+            "node": "Capturas",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Unir capturas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Capturas": {
+      "main": [
+        [
+          {
+            "node": "Unir capturas",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Unir capturas": {
+      "main": [
+        [
+          {
+            "node": "Armar HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar HTML": {
+      "main": [
+        [
+          {
+            "node": "Gotenberg",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gotenberg": {
+      "main": [
+        [
+          {
+            "node": "Nombrar PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Nombrar PDF": {
+      "main": [
+        [
+          {
+            "node": "Enviar reporte",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar reporte": {
+      "main": [
+        [
+          {
+            "node": "Registrar reporte",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Registrar reporte": {
+      "main": [
+        [
+          {
+            "node": "Notify owner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Sao_Paulo"
+  },
+  "pinData": {}
+}

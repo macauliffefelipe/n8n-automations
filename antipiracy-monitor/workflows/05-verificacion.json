@@ -1,0 +1,222 @@
+{
+  "name": "Sentinela 05 · Verificacion",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * *"
+            }
+          ]
+        }
+      },
+      "id": "7494216d-ba59-4aa7-89b7-b6de427169de",
+      "name": "Cron 09:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        170
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "62317cb5-8282-407c-a523-ee32cb0ea748",
+      "name": "Manual",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT a.id AS achado_id, a.url, a.plataforma, a.nivel_escalado,\n       floor(extract(epoch FROM now() - a.notificado_em) / 86400)::int AS dias,\n       (SELECT count(*) FROM (SELECT ainda_no_ar, http_status FROM verificacoes v WHERE v.achado_id = a.id\n                              ORDER BY v.checado_em DESC LIMIT 2) q\n        WHERE q.ainda_no_ar IS NULL AND q.http_status IS NULL) AS nulos_previos\nFROM achados a\nWHERE a.status = 'notificado'\n  AND a.notificado_em <= now() - interval '1 day'\n  AND coalesce((SELECT max(v.checado_em) FROM verificacoes v WHERE v.achado_id = a.id), a.notificado_em)\n      <= now() - interval '20 hours'\nORDER BY a.id\nLIMIT 150;",
+        "options": {}
+      },
+      "id": "a628538f-db85-4b91-af2f-1f3dd567fc15",
+      "name": "A verificar",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        260,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SntPostgres_001",
+          "name": "Sentinela Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://sentinela:8088/chequear",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 500
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ url: $json.url }) }}"
+      },
+      "id": "be3e7b33-582a-43b5-be1c-91e615f14f09",
+      "name": "Chequear",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        520,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "SntApiKey_001",
+          "name": "Sentinela API Key"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "a0e96df6-6f29-4b0f-bd66-5dd819271b7f",
+      "name": "Unir chequeo",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Entrada (Merge por posición): hallazgo a verificar + respuesta de /chequear. Decide removido / escalar / persistente.\nconst REMOVIDO = /(removed (due to|for|because of|at the request)|has been (removed|taken down)|taken down (due to|for)|removido por (viola[cç][aã]o|direitos)|(arquivo|conte[uú]do|livro|documento) (foi )?(removido|exclu[ií]do|indispon[ií]vel)|file (not found|has been deleted)|n[aã]o est[aá] mais dispon[ií]vel)/i;\n\nreturn $input.all().map((it, i) => {\n  const j = it.json;\n  let ainda = null;       // true = sigue arriba, false = removido, null = inconcluso\n  let nota = '';\n  let httpStatus = j.status == null ? '' : String(j.status);\n\n  if (j.tipo === 'telegram') {\n    if (j.estado === 'removido') { ainda = false; nota = j.nota || 'removido en Telegram'; }\n    else if (j.estado === 'activo') { ainda = true; nota = j.nota || ''; }\n    else { ainda = null; nota = j.nota || 'indeterminado'; }\n  } else if (j.error || j.status == null) {\n    const nulos = Number(j.nulos_previos || 0);\n    if (nulos >= 2) { ainda = false; nota = `sitio sin respuesta en 3 chequeos seguidos (${typeof j.error === 'string' ? j.error : 'error'})`; }\n    else { ainda = null; nota = `sin respuesta: ${typeof j.error === 'string' ? j.error : JSON.stringify(j.error || 'error')}`; }\n  } else if (j.status === 404 || j.status === 410) {\n    ainda = false; nota = `HTTP ${j.status}`;\n  } else if (j.status >= 500 || [401, 403, 429].includes(j.status)) {\n    // 401/403/429: casi siempre Cloudflare o un anti-bot frente a nuestro cliente, no prueba de que siga arriba.\n    ainda = null; nota = `HTTP ${j.status} (inconcluso: bloqueo o error del sitio)`;\n  } else if (REMOVIDO.test(String(j.texto || '')) || REMOVIDO.test(String(j.titulo || ''))) {\n    ainda = false; nota = 'la página informa que el contenido fue removido';\n  } else {\n    ainda = true; nota = `HTTP ${j.status}`;\n  }\n\n  const dias = Number(j.dias || 0);\n  const nivel = Number(j.nivel_escalado || 0);\n  let accion = 'seguir';\n  if (ainda === false) accion = 'removido';\n  else if (ainda === true && dias >= 30) accion = 'persistente';\n  else if (ainda === true && dias >= 14 && nivel === 0) accion = 'escalar';\n\n  return {\n    json: {\n      achado_id: j.achado_id,\n      http_status: httpStatus,\n      ainda_no_ar: ainda === null ? '' : String(ainda),\n      nota: String(nota).slice(0, 300),\n      accion,\n    },\n    pairedItem: { item: i },\n  };\n});\n"
+      },
+      "id": "446c5058-9699-49f7-8d96-a3e9104081eb",
+      "name": "Evaluar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH v AS (\n  INSERT INTO verificacoes (achado_id, http_status, ainda_no_ar, nota)\n  VALUES ($1::int, NULLIF($2, '')::int, NULLIF($3, '')::boolean, $4) RETURNING id\n)\nUPDATE achados SET\n  status = CASE $5::text WHEN 'removido' THEN 'removido'::achado_status\n                         WHEN 'persistente' THEN 'persistente'::achado_status\n                         WHEN 'escalar' THEN 'confirmado'::achado_status\n                         ELSE status END,\n  removido_em = CASE WHEN $5::text = 'removido' THEN now() ELSE removido_em END,\n  dias_ate_remocao = CASE WHEN $5::text = 'removido'\n                          THEN floor(extract(epoch FROM now() - notificado_em) / 86400)::int ELSE dias_ate_remocao END,\n  nivel_escalado = CASE WHEN $5::text = 'escalar' THEN nivel_escalado + 1 ELSE nivel_escalado END\nWHERE id = $1::int\nRETURNING id, status, nivel_escalado;",
+        "options": {
+          "queryReplacement": "={{ [$json.achado_id, $json.http_status, $json.ainda_no_ar, $json.nota, $json.accion] }}"
+        }
+      },
+      "id": "d43d2e67-7611-4bfd-bba9-a0428631233f",
+      "name": "Registrar",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1300,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SntPostgres_001",
+          "name": "Sentinela Postgres"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Cron 09:00": {
+      "main": [
+        [
+          {
+            "node": "A verificar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual": {
+      "main": [
+        [
+          {
+            "node": "A verificar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "A verificar": {
+      "main": [
+        [
+          {
+            "node": "Chequear",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Unir chequeo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chequear": {
+      "main": [
+        [
+          {
+            "node": "Unir chequeo",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Unir chequeo": {
+      "main": [
+        [
+          {
+            "node": "Evaluar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluar": {
+      "main": [
+        [
+          {
+            "node": "Registrar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Sao_Paulo"
+  },
+  "pinData": {}
+}

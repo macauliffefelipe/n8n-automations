@@ -1,0 +1,166 @@
+{
+  "name": "Sentinela 08 · Denuncia de lectoras",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Denunciar um link pirata",
+        "formDescription": "Encontrou uma cópia pirata de um livro? Cole o link aqui. Vamos verificar e cuidar da remoção.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Titulo do livro",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Link",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Observacoes"
+            }
+          ]
+        },
+        "options": {
+          "buttonLabel": "Enviar denúncia",
+          "appendAttribution": false
+        }
+      },
+      "id": "6490d4de-9cec-4423-a233-7a233e4bb2d7",
+      "name": "Formulario",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const H = (typeof $helpers !== 'undefined') ? $helpers : this.helpers;\n\nfunction normUrl(u) {\n  try {\n    const x = new URL(String(u).trim());\n    if (x.protocol !== 'http:' && x.protocol !== 'https:') return null;\n    x.hash = '';\n    for (const k of [...x.searchParams.keys()]) {\n      if (/^(utm_|gclid$|fbclid$|ved$|usg$|sa$)/i.test(k)) x.searchParams.delete(k);\n    }\n    x.hostname = x.hostname.toLowerCase().replace(/^www\\./, '');\n    let s = x.toString();\n    if (x.pathname.length > 1 && !x.search && s.endsWith('/')) s = s.slice(0, -1);\n    return s;\n  } catch (e) { return null; }\n}\n\nfunction hostOf(u) {\n  try { return new URL(u).hostname.toLowerCase().replace(/^www\\./, ''); } catch (e) { return ''; }\n}\n\nfunction platformOf(host) {\n  const h = host || '';\n  const is = (d) => h === d || h.endsWith('.' + d);\n  if (is('t.me') || is('telegram.me')) return 'telegram';\n  if (is('scribd.com')) return 'scribd';\n  if (is('docero.com.br') || is('docero.net')) return 'docero';\n  if (is('passeidireto.com')) return 'passeidireto';\n  if (is('4shared.com')) return '4shared';\n  if (is('mediafire.com')) return 'mediafire';\n  if (is('mercadolivre.com.br') || is('mercadolibre.com')) return 'mercadolivre';\n  if (/(^|\\.)amazon\\./.test(h)) return 'amazon';\n  if (is('drive.google.com') || is('docs.google.com')) return 'drive';\n  return 'web';\n}\n\nfunction esc(s) {\n  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n}\n// Denuncia de una lectora: normaliza la URL y la deja en la cola de revisión.\nconst j = $input.first().json;\nconst url = normUrl(j['Link']);\nif (!url) return [];\nreturn [{ json: {\n  titulo: String(j['Titulo do livro'] || '').trim(),\n  url,\n  plataforma: platformOf(hostOf(url)),\n  nota: String(j['Observacoes'] || '').slice(0, 500),\n} }];\n"
+      },
+      "id": "ba03529a-40fc-4fb7-aaf9-2c8b57c56956",
+      "name": "Normalizar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH entrada AS (\n  SELECT lower(trim($1::text)) AS t\n), obra AS (\n  SELECT o.id\n  FROM obras o, entrada e,\n       LATERAL unnest(array_prepend(o.titulo, o.titulos_variantes)) AS v(titulo)\n  WHERE o.ativa AND length(e.t) >= 3 AND length(trim(v.titulo)) >= 3\n    AND (lower(v.titulo) LIKE '%' || replace(replace(replace(e.t, '\\', '\\\\'), '%', '\\%'), '_', '\\_') || '%'\n         OR e.t LIKE '%' || replace(replace(replace(lower(v.titulo), '\\', '\\\\'), '%', '\\%'), '_', '\\_') || '%')\n  ORDER BY length(v.titulo) DESC\n  LIMIT 1\n), limite AS (\n  SELECT count(*) < 30 AS ok FROM achados WHERE motor = 'denuncia' AND achado_em > now() - interval '1 hour'\n), ins AS (\n  INSERT INTO achados (obra_id, url, url_hash, plataforma, motor, snippet, status, motivo)\n  SELECT obra.id, $2::text, md5($2::text), $3::text, 'denuncia', left($4::text, 800), 'novo', 'denuncia de lectora'\n  FROM obra, limite\n  WHERE limite.ok\n  ON CONFLICT (obra_id, url_hash) DO NOTHING\n  RETURNING id\n)\nSELECT (SELECT id FROM ins) AS achado_id,\n       (SELECT ok FROM limite) AS dentro_limite,\n       EXISTS (SELECT 1 FROM obra) AND (SELECT ok FROM limite) AND NOT EXISTS (SELECT 1 FROM ins) AS duplicada,\n       (SELECT valor FROM config WHERE chave = 'telegram_admin_chat_id') AS chat_id;",
+        "options": {
+          "queryReplacement": "={{ [$json.titulo, $json.url, $json.plataforma, $json.nota] }}"
+        }
+      },
+      "id": "b1c23e8c-14c7-41f5-bd3b-18a46f3e7f0a",
+      "name": "Guardar denuncia",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        520,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SntPostgres_001",
+          "name": "Sentinela Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const H = (typeof $helpers !== 'undefined') ? $helpers : this.helpers;\n\nfunction normUrl(u) {\n  try {\n    const x = new URL(String(u).trim());\n    if (x.protocol !== 'http:' && x.protocol !== 'https:') return null;\n    x.hash = '';\n    for (const k of [...x.searchParams.keys()]) {\n      if (/^(utm_|gclid$|fbclid$|ved$|usg$|sa$)/i.test(k)) x.searchParams.delete(k);\n    }\n    x.hostname = x.hostname.toLowerCase().replace(/^www\\./, '');\n    let s = x.toString();\n    if (x.pathname.length > 1 && !x.search && s.endsWith('/')) s = s.slice(0, -1);\n    return s;\n  } catch (e) { return null; }\n}\n\nfunction hostOf(u) {\n  try { return new URL(u).hostname.toLowerCase().replace(/^www\\./, ''); } catch (e) { return ''; }\n}\n\nfunction platformOf(host) {\n  const h = host || '';\n  const is = (d) => h === d || h.endsWith('.' + d);\n  if (is('t.me') || is('telegram.me')) return 'telegram';\n  if (is('scribd.com')) return 'scribd';\n  if (is('docero.com.br') || is('docero.net')) return 'docero';\n  if (is('passeidireto.com')) return 'passeidireto';\n  if (is('4shared.com')) return '4shared';\n  if (is('mediafire.com')) return 'mediafire';\n  if (is('mercadolivre.com.br') || is('mercadolibre.com')) return 'mercadolivre';\n  if (/(^|\\.)amazon\\./.test(h)) return 'amazon';\n  if (is('drive.google.com') || is('docs.google.com')) return 'drive';\n  return 'web';\n}\n\nfunction esc(s) {\n  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n}\n// Entrada: resultado de \"Guardar denuncia\". Avisa por Telegram solo cuando la denuncia NO entró a la cola\n// (título que no coincide con ninguna obra, o límite por hora alcanzado), para que no se pierda en silencio.\nconst r = $input.first().json || {};\nconst d = $('Normalizar').first().json;\nconst chat = String(r.chat_id || '').trim();\nif (!chat || r.achado_id || r.duplicada) return [];\nconst motivo = !r.dentro_limite\n  ? 'se alcanzó el límite de denuncias por hora (posible spam). No se guardó.'\n  : 'el título no coincide con ninguna obra activa. No se guardó; si es válida, cargala a mano.';\nreturn [{\n  json: {\n    chat_id: chat,\n    texto: `📝 <b>Denuncia de lectora sin procesar</b>: ${motivo}\\nTítulo escrito: ${esc(d.titulo)}\\nLink: ${esc(d.url)}${d.nota ? `\\nNota: ${esc(d.nota)}` : ''}`.slice(0, 3900),\n  },\n}];\n"
+      },
+      "id": "ecc5a319-661f-4440-9fa7-04eea3cb6f4a",
+      "name": "Aviso si no entro",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.texto }}",
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "appendAttribution": false,
+          "disable_web_page_preview": true
+        }
+      },
+      "id": "1dad2f10-9315-4e80-b41b-d35f557de413",
+      "name": "Avisar denuncia",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1040,
+        0
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "SntTelegram_001",
+          "name": "Sentinela Bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Formulario": {
+      "main": [
+        [
+          {
+            "node": "Normalizar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar": {
+      "main": [
+        [
+          {
+            "node": "Guardar denuncia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar denuncia": {
+      "main": [
+        [
+          {
+            "node": "Aviso si no entro",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aviso si no entro": {
+      "main": [
+        [
+          {
+            "node": "Avisar denuncia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Sao_Paulo"
+  },
+  "pinData": {}
+}

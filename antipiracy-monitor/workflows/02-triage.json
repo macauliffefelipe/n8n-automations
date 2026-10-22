@@ -1,0 +1,657 @@
+{
+  "name": "Sentinela 02 · Triage",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      },
+      "id": "d7063498-39a8-4f38-b772-1026e98c6528",
+      "name": "Cada 30 min",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        170
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "2e1c7e34-8f1f-4121-8814-2c350dfce212",
+      "name": "Manual",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT jsonb_object_agg(chave, valor) AS cfg FROM config;",
+        "options": {}
+      },
+      "id": "ed75b430-52b4-4242-8fc7-51306794816f",
+      "name": "Config",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        260,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SntPostgres_001",
+          "name": "Sentinela Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT a.id, a.url, a.plataforma, a.snippet, a.es_frase,\n       o.titulo AS obra_titulo, o.asin, o.urls_oficiais, o.site_oficial, c.nome_autoral,\n       (SELECT coalesce(array_agg(dominio), '{}') FROM whitelist_dominios) AS wl\nFROM achados a\nJOIN obras o ON o.id = a.obra_id\nJOIN clientes c ON c.id = o.cliente_id\nWHERE a.status = 'novo'\nORDER BY a.es_frase DESC, a.id\nLIMIT 20;",
+        "options": {}
+      },
+      "id": "292e4a04-6418-4a3c-a3c5-e8b9b2a024ae",
+      "name": "Hallazgos nuevos",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        520,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SntPostgres_001",
+          "name": "Sentinela Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const H = (typeof $helpers !== 'undefined') ? $helpers : this.helpers;\n\nfunction normUrl(u) {\n  try {\n    const x = new URL(String(u).trim());\n    if (x.protocol !== 'http:' && x.protocol !== 'https:') return null;\n    x.hash = '';\n    for (const k of [...x.searchParams.keys()]) {\n      if (/^(utm_|gclid$|fbclid$|ved$|usg$|sa$)/i.test(k)) x.searchParams.delete(k);\n    }\n    x.hostname = x.hostname.toLowerCase().replace(/^www\\./, '');\n    let s = x.toString();\n    if (x.pathname.length > 1 && !x.search && s.endsWith('/')) s = s.slice(0, -1);\n    return s;\n  } catch (e) { return null; }\n}\n\nfunction hostOf(u) {\n  try { return new URL(u).hostname.toLowerCase().replace(/^www\\./, ''); } catch (e) { return ''; }\n}\n\nfunction platformOf(host) {\n  const h = host || '';\n  const is = (d) => h === d || h.endsWith('.' + d);\n  if (is('t.me') || is('telegram.me')) return 'telegram';\n  if (is('scribd.com')) return 'scribd';\n  if (is('docero.com.br') || is('docero.net')) return 'docero';\n  if (is('passeidireto.com')) return 'passeidireto';\n  if (is('4shared.com')) return '4shared';\n  if (is('mediafire.com')) return 'mediafire';\n  if (is('mercadolivre.com.br') || is('mercadolibre.com')) return 'mercadolivre';\n  if (/(^|\\.)amazon\\./.test(h)) return 'amazon';\n  if (is('drive.google.com') || is('docs.google.com')) return 'drive';\n  return 'web';\n}\n\nfunction esc(s) {\n  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n}\n// Marca cada hallazgo como en_whitelist (tienda oficial, sitio de la autora, redes de lectores).\nconst out = [];\n$input.all().forEach((it, i) => {\n  const a = it.json;\n  const host = hostOf(a.url);\n  const nurl = normUrl(a.url) || a.url;\n  const dom = (a.wl || []).find((d) => host === d || host.endsWith('.' + d));\n  const oficial = (a.urls_oficiais || []).find((u) => {\n    const n = normUrl(u);\n    return n && nurl.startsWith(n);\n  });\n  const siteOficial = a.site_oficial && (host === a.site_oficial || host.endsWith('.' + a.site_oficial));\n  const asinHit = a.asin && /(^|\\.)amazon\\./.test(host) && String(a.url).includes(a.asin);\n  let motivo = null;\n  if (dom) motivo = 'whitelist dominio ' + dom;\n  else if (oficial) motivo = 'URL oficial de la obra';\n  else if (siteOficial) motivo = 'sitio de la autora';\n  else if (asinHit) motivo = 'ficha oficial de Amazon (ASIN)';\n  out.push({\n    json: {\n      id: a.id, url: a.url, plataforma: a.plataforma, snippet: a.snippet, es_frase: a.es_frase,\n      obra_titulo: a.obra_titulo, nome_autoral: a.nome_autoral,\n      en_whitelist: !!motivo, wl_motivo: motivo,\n    },\n    pairedItem: { item: i },\n  });\n});\nreturn out;\n"
+      },
+      "id": "f3ccffe2-1392-4ef7-8f51-4fe42ae70ebf",
+      "name": "Whitelist",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "035fe64a-beb3-4fe5-85e5-50ecb445862d",
+              "leftValue": "={{ $json.en_whitelist }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "99eb68b6-1c11-4547-ab0f-ba9118899d06",
+      "name": "En whitelist?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1040,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE achados SET status = 'rejeitado', motivo = $2 WHERE id = $1::int AND status = 'novo' RETURNING id;",
+        "options": {
+          "queryReplacement": "={{ [$json.id, $json.wl_motivo] }}"
+        }
+      },
+      "id": "ba9111d5-2f0f-4a5f-87c0-550f1e3765ca",
+      "name": "Rechazar whitelist",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1300,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SntPostgres_001",
+          "name": "Sentinela Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://sentinela:8088/pagina",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 40000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 500
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ url: $json.url }) }}"
+      },
+      "id": "50fa647e-9c94-4d9d-bbf5-767aff3a4e77",
+      "name": "Bajar pagina",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1300,
+        170
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "SntApiKey_001",
+          "name": "Sentinela API Key"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "d95d3933-63e1-49ae-bfce-91fd59139915",
+      "name": "Unir pagina",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1560,
+        170
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Entrada (Merge por posición): hallazgo + respuesta de /pagina. Arma el body para Ollama.\nconst MODELO = 'qwen2.5:14b';   // EDITAR: cualquier modelo que tengas en Ollama (ollama list)\nconst SYS = [\n  'Sos un analista antipiratería de libros. Decidís si una URL ofrece, aloja o vende copias NO autorizadas de un libro.',\n  'Respondé SOLO con un objeto JSON, sin texto extra, con estas claves:',\n  '\"infractor\" (true o false), \"confianza\" (número entre 0 y 1), \"tipo\" (uno de: pdf_direto, agregador, grupo_telegram, listing, otro), \"motivo\" (una frase corta en español).',\n  'Reglas:',\n  '- infractor=true solo si el resultado permite leer o descargar el libro completo, o vende una copia que no es la edición oficial.',\n  '- Un archivo PDF/EPUB/MOBI con el título del libro es infractor=true.',\n  '- infractor=false si es una reseña, blog, noticia, ficha de una librería oficial, red social de lectores, o si solo menciona el título.',\n  '- Si dudás, usá confianza menor a 0.6.',\n].join('\\n');\n\nreturn $input.all().map((it, i) => {\n  const j = it.json;\n  const datos = {\n    libro: j.obra_titulo,\n    autora: j.nome_autoral,\n    url: j.url,\n    plataforma: j.plataforma,\n    texto_del_resultado: j.snippet || null,\n    tipo_de_contenido: j.content_type || null,\n    tamano_bytes: j.bytes || null,\n    http_status: j.status || null,\n    titulo_pagina: j.titulo || null,\n    texto_pagina: String(j.texto || '').slice(0, 2000),\n  };\n  const body = {\n    model: MODELO,\n    stream: false,\n    format: 'json',\n    options: { temperature: 0, num_ctx: 4096 },\n    messages: [{ role: 'system', content: SYS }, { role: 'user', content: JSON.stringify(datos) }],\n  };\n  return {\n    json: {\n      id: j.id, url: j.url, es_frase: j.es_frase, plataforma: j.plataforma, motor: j.motor,\n      content_type: j.content_type || null, ollama_body: body,\n    },\n    pairedItem: { item: i },\n  };\n});\n"
+      },
+      "id": "2419d1d0-894e-4938-b540-51e44a3e52ed",
+      "name": "Armar prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1820,
+        170
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:11434/api/chat",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.ollama_body) }}",
+        "options": {
+          "timeout": 240000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 0
+            }
+          }
+        }
+      },
+      "id": "97666bfa-c066-46a7-bda4-4c14fc945ea4",
+      "name": "Ollama",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2080,
+        170
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "c32a47d4-cc73-48f0-9a0f-fb359e701535",
+      "name": "Unir respuesta LLM",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        2340,
+        170
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Entrada (Merge por posición): item del prompt + respuesta de Ollama (message.content).\n// Decide el estado. Con umbral_auto y umbral_rechazo en 1.01 (default) nada se confirma ni se descarta solo:\n// todo va a la cola humana. Si Ollama no respondió, el hallazgo queda en 'novo' para reintentarlo.\nconst cfg = $('Config').first().json.cfg || {};\nconst umbral = parseFloat(cfg.umbral_auto || '1.01');\n// Descarte automático: con 1.01 (default) nada se descarta solo. Un descarte es definitivo (la URL no vuelve a entrar).\nconst umbralRechazo = parseFloat(cfg.umbral_rechazo || '1.01');\nconst TIPOS = ['pdf_direto', 'agregador', 'grupo_telegram', 'listing', 'otro'];\n\nreturn $input.all().map((it, i) => {\n  const j = it.json;\n  // Ollama caído (timeout, Mac mini dormida, túnel cortado): el hallazgo queda en 'novo' y se reintenta en la próxima corrida.\n  if (j.error && !j.message) {\n    return { json: { id: j.id, url: j.url, status: 'novo', confianca: null, tipo: null, motivo: null, sin_llm: true }, pairedItem: { item: i } };\n  }\n  let r = null;\n  try {\n    let c = (j.message && j.message.content) || '';\n    c = String(c).replace(/```json|```/g, '').trim();\n    const m = c.match(/\\{[\\s\\S]*\\}/);\n    r = JSON.parse(m ? m[0] : c);\n  } catch (e) { r = null; }\n\n  let infractor = !!r && (r.infractor === true || r.infractor === 'true');\n  let conf = r ? parseFloat(r.confianza) : 0;\n  if (isNaN(conf)) conf = 0;\n  conf = Math.min(1, Math.max(0, conf));\n  const tipo = r && TIPOS.includes(r.tipo) ? r.tipo : 'otro';\n  let motivo = r ? String(r.motivo || '').slice(0, 300) : 'LLM sin respuesta válida: revisar a mano';\n\n  // Coincidencia de frase exacta del interior del libro: evidencia fuerte (casi cero falsos positivos).\n  if (r && j.es_frase && infractor) {\n    conf = Math.max(conf, 0.9);\n    motivo += ' [coincide frase exacta del libro]';\n  }\n\n  let status;\n  if (!r) status = 'revisao';\n  else if (!infractor && conf >= umbralRechazo) status = 'rejeitado';\n  else if (infractor && conf >= umbral) status = 'confirmado';\n  else status = 'revisao';\n\n  return { json: { id: j.id, url: j.url, status, confianca: conf, tipo, motivo, sin_llm: false }, pairedItem: { item: i } };\n});\n"
+      },
+      "id": "09ab9e31-3a83-44ef-96f2-51db248aa34a",
+      "name": "Decidir",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2600,
+        170
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE achados SET status = $2::achado_status, confianca = NULLIF($3, '')::numeric, tipo = $4, motivo = $5 WHERE id = $1::int AND status = 'novo' AND $2::text <> 'novo' RETURNING id, url, status;",
+        "options": {
+          "queryReplacement": "={{ [$json.id, $json.status, $json.confianca == null ? '' : String($json.confianca), $json.tipo || '', $json.motivo || ''] }}"
+        }
+      },
+      "id": "c73d5a8a-138c-423f-9a02-caf15dbb3266",
+      "name": "Guardar triage",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2860,
+        170
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SntPostgres_001",
+          "name": "Sentinela Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "a324aa1c-1146-44e5-8e56-f4a205f161d6",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "rejeitado",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cebf2061-eeac-4ae4-862b-0637b64b8fa7",
+      "name": "Necesita captura?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3120,
+        170
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://sentinela:8088/captura",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 90000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 500
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ achado_id: $json.id, url: $json.url }) }}"
+      },
+      "id": "20861fe2-1b69-4579-91a0-95f4a367ee48",
+      "name": "Captura",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3380,
+        170
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "SntApiKey_001",
+          "name": "Sentinela API Key"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "22e81419-9c6f-427b-a642-8e42ab473213",
+      "name": "Unir captura",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        3640,
+        170
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE achados SET print_url = NULLIF($2, '') WHERE id = $1::int AND $3::text = 'true' RETURNING id;",
+        "options": {
+          "queryReplacement": "={{ [$json.id, $json.print_url || '', String($json.ok === true)] }}"
+        }
+      },
+      "id": "e9262cc7-3e12-4cf4-b874-4a1b5b7ecc19",
+      "name": "Guardar captura",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        3900,
+        170
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SntPostgres_001",
+          "name": "Sentinela Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Entrada: salida de \"Decidir\". Si Ollama no respondió, avisa por Telegram como máximo una vez cada 6 horas\n// (el triage corre cada 30 min y los hallazgos quedan en 'novo' hasta que vuelva).\nconst cfg = $('Config').first().json.cfg || {};\nconst chat = String(cfg.telegram_admin_chat_id || '').trim();\nconst items = $input.all().map((i) => i.json);\nconst fallidos = items.filter((x) => x.sin_llm).length;\nif (!chat || !fallidos) return [];\nconst st = $getWorkflowStaticData('global');\nconst ahora = Date.now();\nif (st.ultimo_aviso_llm && ahora - st.ultimo_aviso_llm < 6 * 3600 * 1000) return [];\nst.ultimo_aviso_llm = ahora;\nreturn [{\n  json: {\n    chat_id: chat,\n    texto: `⚠️ <b>Triage</b>: Ollama no respondió para ${fallidos} de ${items.length} hallazgos. `\n      + 'Quedan en cola (novo) y se reintentan solos. Revisá que la Mac mini esté despierta y el túnel/Tailscale arriba. '\n      + '(Este aviso se repite como máximo cada 6 h.)',\n  },\n}];\n"
+      },
+      "id": "534b8bfc-a733-4f17-aa7d-8a9ef395973c",
+      "name": "Ollama caido?",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2860,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.texto }}",
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "appendAttribution": false,
+          "disable_web_page_preview": true
+        }
+      },
+      "id": "4b42816f-d4a1-4ab6-aff4-ca9d7425c639",
+      "name": "Avisar Ollama",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3120,
+        340
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "SntTelegram_001",
+          "name": "Sentinela Bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Cada 30 min": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Hallazgos nuevos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hallazgos nuevos": {
+      "main": [
+        [
+          {
+            "node": "Whitelist",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Whitelist": {
+      "main": [
+        [
+          {
+            "node": "En whitelist?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "En whitelist?": {
+      "main": [
+        [
+          {
+            "node": "Rechazar whitelist",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Bajar pagina",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Unir pagina",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bajar pagina": {
+      "main": [
+        [
+          {
+            "node": "Unir pagina",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Unir pagina": {
+      "main": [
+        [
+          {
+            "node": "Armar prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar prompt": {
+      "main": [
+        [
+          {
+            "node": "Ollama",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Unir respuesta LLM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama": {
+      "main": [
+        [
+          {
+            "node": "Unir respuesta LLM",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Unir respuesta LLM": {
+      "main": [
+        [
+          {
+            "node": "Decidir",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decidir": {
+      "main": [
+        [
+          {
+            "node": "Guardar triage",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Ollama caido?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar triage": {
+      "main": [
+        [
+          {
+            "node": "Necesita captura?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Necesita captura?": {
+      "main": [
+        [
+          {
+            "node": "Captura",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Unir captura",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Captura": {
+      "main": [
+        [
+          {
+            "node": "Unir captura",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Unir captura": {
+      "main": [
+        [
+          {
+            "node": "Guardar captura",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama caido?": {
+      "main": [
+        [
+          {
+            "node": "Avisar Ollama",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Sao_Paulo"
+  },
+  "pinData": {}
+}
